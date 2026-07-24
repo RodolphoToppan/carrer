@@ -1,0 +1,89 @@
+{
+  "format": "source_export_v1",
+  "captured_at": "2026-06-30T18:00:00+00:00",
+  "engineer": {
+    "id": "engineer-1",
+    "display_name": "Sample Engineer",
+    "primary_email_hash": "sample-email-hash"
+  },
+  "source": {
+    "id": "azure-devops-sample",
+    "type": "azure_devops_export",
+    "name": "Azure DevOps Sample Export",
+    "visibility": "private"
+  },
+  "records": [
+    {
+      "source_entity_type": "work_item",
+      "external_id": "ADO-WI-1001",
+      "occurred_at": "2025-04-02T09:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Implement order import retry behavior",
+        "state": "Done",
+        "domain": "marketplace integrations",
+        "technologies": ["Java", "Spring Boot", "RabbitMQ"],
+        "tags": ["backend", "integration"]
+      }
+    },
+    {
+      "source_entity_type": "pull_request",
+      "external_id": "ADO-PR-221",
+      "occurred_at": "2025-04-03T14:30:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Add retry handling for imported marketplace orders",
+        "status": "completed",
+        "domain": "marketplace integrations",
+        "technologies": ["Java", "Spring Boot", "RabbitMQ"],
+        "repository": "redacted-repository"
+      }
+    },
+    {
+      "source_entity_type": "commit",
+      "external_id": "ADO-COMMIT-abc123",
+      "occurred_at": "2025-04-03T15:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "message": "Improve order import retry handling",
+        "domain": "marketplace integrations",
+        "technologies": ["Java", "RabbitMQ"],
+        "repository": "redacted-repository"
+      }
+    },
+    {
+      "source_entity_type": "review_comment",
+      "external_id": "ADO-REVIEW-77",
+      "occurred_at": "2025-04-03T16:10:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "summary": "Discussed retry boundaries and operational visibility",
+        "domain": "asynchronous processing",
+        "technologies": ["RabbitMQ"],
+        "repository": "redacted-repository"
+      }
+    },
+    {
+      "source_entity_type": "documentation",
+      "external_id": "ADO-DOC-12",
+      "occurred_at": "2025-04-04T10:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Document marketplace order retry flow",
+        "domain": "asynchronous processing",
+        "technologies": ["RabbitMQ"]
+      }
+    },
+    {
+      "source_entity_type": "work_item",
+      "external_id": "ADO-WI-PRIVATE",
+      "occurred_at": "2025-04-05T09:00:00+00:00",
+      "privacy_level": "private",
+      "payload": {
+        "title": "Internal operational workflow",
+        "domain": "internal operations",
+        "technologies": ["InternalToolX", "InternalToolX"]
+      }
+    }
+  ]
+}

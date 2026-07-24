@@ -1,0 +1,11 @@
+SELECT
+    [System.Id]
+FROM WorkItems
+WHERE
+    [System.TeamProject] = @project
+    AND
+    (
+        [System.AssignedTo] = @Me
+        OR [System.CreatedBy] = @Me
+    )
+ORDER BY [System.CreatedDate] ASC

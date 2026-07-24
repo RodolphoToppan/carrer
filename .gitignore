@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+
+.codex/env.local.ps1
+.codex/env.local.sh
+
+.idea/
+
+__pycache__/
+*.py[cod]
+
+data/
+tmp/

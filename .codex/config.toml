@@ -1,0 +1,19 @@
+[mcp_servers.azure-devops]
+command = "npx"
+args = [
+    "-y",
+    "@azure-devops/mcp",
+    "db1global",
+]
+env_vars = ["AZURE_DEVOPS_EXT_PAT"]
+
+[mcp_servers.azure-devops.env]
+AZURE_DEVOPS_PROJECT = "Koncili"
+
+[mcp_servers.gitlab]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-gitlab",
+]
+env_vars = ["GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_API_URL", "NODE_EXTRA_CA_CERTS"]

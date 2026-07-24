@@ -1,0 +1,93 @@
+{
+  "captured_at": "2026-06-30T12:00:00+00:00",
+  "engineer": {
+    "id": "engineer-1",
+    "display_name": "Sample Engineer",
+    "primary_email_hash": "sample-email-hash"
+  },
+  "source": {
+    "id": "fixture-source",
+    "type": "json_fixture",
+    "name": "Synthetic Fixture",
+    "visibility": "private"
+  },
+  "records": [
+    {
+      "type": "work_item",
+      "external_id": "WI-1",
+      "occurred_at": "2025-01-10T09:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Implement marketplace order import flow",
+        "domain": "marketplace integrations",
+        "technologies": ["Java", "Spring Boot"]
+      }
+    },
+    {
+      "type": "commit",
+      "external_id": "C-1",
+      "occurred_at": "2025-01-11T10:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "message": "Add validation for imported marketplace orders",
+        "domain": "marketplace integrations",
+        "technologies": ["Java", "Spring Boot"]
+      }
+    },
+    {
+      "type": "work_item",
+      "external_id": "WI-2",
+      "occurred_at": "2025-02-03T09:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Investigate asynchronous processing behavior",
+        "domain": "asynchronous processing",
+        "technologies": ["RabbitMQ", "Java"]
+      }
+    },
+    {
+      "type": "commit",
+      "external_id": "C-2",
+      "occurred_at": "2025-02-04T11:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "message": "Improve message retry handling",
+        "domain": "asynchronous processing",
+        "technologies": ["RabbitMQ", "Java"]
+      }
+    },
+    {
+      "type": "documentation",
+      "external_id": "DOC-1",
+      "occurred_at": "2025-02-05T15:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Document order processing operational flow",
+        "domain": "asynchronous processing",
+        "technologies": ["RabbitMQ"]
+      }
+    },
+    {
+      "type": "commit",
+      "external_id": "C-2",
+      "occurred_at": "2025-02-04T11:00:00+00:00",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "message": "Improve message retry handling",
+        "domain": "asynchronous processing",
+        "technologies": ["RabbitMQ", "Java"]
+      }
+    },
+    {
+      "type": "work_item",
+      "external_id": "WI-PRIVATE",
+      "occurred_at": "2025-03-01T09:00:00+00:00",
+      "privacy_level": "private",
+      "payload": {
+        "title": "Internal-only workflow",
+        "domain": "internal operations",
+        "technologies": ["InternalToolX", "InternalToolX"]
+      }
+    }
+  ]
+}
