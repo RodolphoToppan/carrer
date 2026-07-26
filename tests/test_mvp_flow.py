@@ -1,43 +1,43 @@
 import json
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from career_intelligence_mvp import (
+    GraphStore,
     artifact_markdown,
+    artifact_traceability,
+    artifact_traceability_markdown,
     artifact_validation_markdown,
     career_timeline_markdown,
     cluster_technology_knowledge,
     cover_letter_markdown,
     extract_context_signals,
-    GraphStore,
-    artifact_traceability,
-    artifact_traceability_markdown,
+    gap_analysis_markdown,
     generate_career_timeline_draft,
     generate_cover_letter_draft,
     generate_gap_analysis_draft,
-    generate_knowledge,
     generate_interview_answers_draft,
-    job_requirement_matches,
+    generate_knowledge,
     generate_linkedin_draft,
     generate_resume_draft,
     generate_skill_matrix,
     generate_star_stories_draft,
-    gap_analysis_markdown,
     infer_observations,
     ingest_fixture,
     interview_answers_markdown,
+    job_requirement_matches,
     linkedin_markdown,
     load_fixture,
     load_source_input,
-    review_node,
+    resume_markdown,
     review_items,
+    review_node,
     reviewable_items,
     run_pipeline,
-    resume_markdown,
     set_knowledge_privacy,
     star_stories_markdown,
     validate_artifact,
@@ -83,7 +83,10 @@ class MvpFlowTest(unittest.TestCase):
                     "external_id": "ADO-WI-1",
                     "occurred_at": "2026-01-01T00:00:00Z",
                     "privacy_level": "internal",
-                    "payload": {"title": "Child card", "relationships": [{"type": "System.LinkTypes.Hierarchy-Reverse", "external_id": "ADO-WI-2"}]},
+                    "payload": {
+                        "title": "Child card",
+                        "relationships": [{"type": "System.LinkTypes.Hierarchy-Reverse", "external_id": "ADO-WI-2"}],
+                    },
                 },
                 {
                     "type": "work_item",
@@ -124,10 +127,7 @@ class MvpFlowTest(unittest.TestCase):
         self.assertIn("records;", artifact_markdown(artifact))
 
         knowledge_ids = {row["knowledge_id"] for row in rows}
-        artifact_edges = [
-            edge for edge in store.edges
-            if edge["edge_type"] == "ARTIFACT_GENERATED_FROM_KNOWLEDGE"
-        ]
+        artifact_edges = [edge for edge in store.edges if edge["edge_type"] == "ARTIFACT_GENERATED_FROM_KNOWLEDGE"]
         self.assertTrue(knowledge_ids.issubset({edge["to_node_id"] for edge in artifact_edges}))
 
     def test_graph_store_persists_pipeline_output(self):
@@ -213,7 +213,12 @@ class MvpFlowTest(unittest.TestCase):
                     "format": "source_export_v1",
                     "captured_at": "2026-01-01T00:00:00Z",
                     "engineer": {"id": "engineer-1", "display_name": "Rodolpho", "primary_email_hash": "hash"},
-                    "source": {"id": "source-1", "type": "azure_devops_export", "name": "Azure", "visibility": "private"},
+                    "source": {
+                        "id": "source-1",
+                        "type": "azure_devops_export",
+                        "name": "Azure",
+                        "visibility": "private",
+                    },
                     "records": [
                         {
                             "source_entity_type": "unknown",
@@ -298,7 +303,9 @@ class MvpFlowTest(unittest.TestCase):
             artifact = generate_skill_matrix(store)
 
             # Check for enriched statement (includes evidence count now)
-            self.assertTrue(any("Practical experience with Java" in row["statement"] for row in artifact["properties"]["rows"]))
+            self.assertTrue(
+                any("Practical experience with Java" in row["statement"] for row in artifact["properties"]["rows"])
+            )
         finally:
             if export_path.exists():
                 export_path.unlink()
@@ -308,7 +315,12 @@ class MvpFlowTest(unittest.TestCase):
             "format": "source_export_v1",
             "captured_at": "2026-01-01T00:00:00Z",
             "engineer": {"id": "engineer-1", "display_name": "Rodolpho", "primary_email_hash": "hash"},
-            "source": {"id": "job-descriptions-local", "type": "job_descriptions", "name": "Job Descriptions", "visibility": "artifact_safe"},
+            "source": {
+                "id": "job-descriptions-local",
+                "type": "job_descriptions",
+                "name": "Job Descriptions",
+                "visibility": "artifact_safe",
+            },
             "records": [
                 {
                     "source_entity_type": "job_description",
@@ -358,7 +370,9 @@ class MvpFlowTest(unittest.TestCase):
         review_node(store, proposed_observation["id"], "reject", "not accurate")
         knowledge = generate_knowledge(store)
 
-        self.assertFalse(any(proposed_observation["id"] in item["properties"]["observation_refs"] for item in knowledge))
+        self.assertFalse(
+            any(proposed_observation["id"] in item["properties"]["observation_refs"] for item in knowledge)
+        )
 
     def test_artifact_traceability_explains_each_claim(self):
         store, _ = run_pipeline(ROOT / "examples" / "azure_devops_export_sample.json")
@@ -440,9 +454,15 @@ class MvpFlowTest(unittest.TestCase):
         self.assertTrue(highlights)
         self.assertEqual(resume["properties"]["artifact_type"], "Resume")
         self.assertTrue(all(item["support_strength"] in {"strong", "moderate", "weak"} for item in highlights))
-        self.assertTrue(all(item["evidence_context"]["evidence_count"] == len(item["evidence_refs"]) for item in highlights))
-        highlight_order = [(item["support_strength"], item["evidence_context"]["evidence_count"]) for item in highlights]
-        expected_order = sorted(highlight_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1]))
+        self.assertTrue(
+            all(item["evidence_context"]["evidence_count"] == len(item["evidence_refs"]) for item in highlights)
+        )
+        highlight_order = [
+            (item["support_strength"], item["evidence_context"]["evidence_count"]) for item in highlights
+        ]
+        expected_order = sorted(
+            highlight_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1])
+        )
         self.assertEqual(highlight_order, expected_order)
         self.assertFalse(any("InternalToolX" in item["statement"] for item in highlights))
 
@@ -462,9 +482,15 @@ class MvpFlowTest(unittest.TestCase):
         self.assertEqual(linkedin["properties"]["artifact_type"], "LinkedIn")
         self.assertIn("headline", linkedin["properties"]["sections"])
         self.assertIn("about", linkedin["properties"]["sections"])
-        self.assertTrue(all(item["evidence_context"]["evidence_count"] == len(item["evidence_refs"]) for item in highlights))
-        highlight_order = [(item["support_strength"], item["evidence_context"]["evidence_count"]) for item in highlights]
-        expected_order = sorted(highlight_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1]))
+        self.assertTrue(
+            all(item["evidence_context"]["evidence_count"] == len(item["evidence_refs"]) for item in highlights)
+        )
+        highlight_order = [
+            (item["support_strength"], item["evidence_context"]["evidence_count"]) for item in highlights
+        ]
+        expected_order = sorted(
+            highlight_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1])
+        )
         self.assertEqual(highlight_order, expected_order)
         self.assertFalse(any("InternalToolX" in item["statement"] for item in highlights))
 
@@ -484,9 +510,13 @@ class MvpFlowTest(unittest.TestCase):
         self.assertEqual(artifact["properties"]["artifact_type"], "STAR Stories")
         self.assertTrue(all(story["knowledge_id"] for story in stories))
         self.assertTrue(all(story["evidence_refs"] for story in stories))
-        self.assertTrue(all(story["evidence_context"]["evidence_count"] == len(story["evidence_refs"]) for story in stories))
+        self.assertTrue(
+            all(story["evidence_context"]["evidence_count"] == len(story["evidence_refs"]) for story in stories)
+        )
         story_order = [(story["support_strength"], story["evidence_context"]["evidence_count"]) for story in stories]
-        expected_order = sorted(story_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1]))
+        expected_order = sorted(
+            story_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1])
+        )
         self.assertEqual(story_order, expected_order)
         self.assertTrue(all(story["review_notes"] for story in stories))
         self.assertTrue(all("unsupported metric" in story["result"] for story in stories))
@@ -509,9 +539,15 @@ class MvpFlowTest(unittest.TestCase):
         self.assertEqual(artifact["properties"]["artifact_type"], "Interview Answers")
         self.assertTrue(all(answer["knowledge_id"] for answer in answers))
         self.assertTrue(all(answer["evidence_refs"] for answer in answers))
-        self.assertTrue(all(answer["evidence_context"]["evidence_count"] == len(answer["evidence_refs"]) for answer in answers))
-        answer_order = [(answer["support_strength"], answer["evidence_context"]["evidence_count"]) for answer in answers]
-        expected_order = sorted(answer_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1]))
+        self.assertTrue(
+            all(answer["evidence_context"]["evidence_count"] == len(answer["evidence_refs"]) for answer in answers)
+        )
+        answer_order = [
+            (answer["support_strength"], answer["evidence_context"]["evidence_count"]) for answer in answers
+        ]
+        expected_order = sorted(
+            answer_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1])
+        )
         self.assertEqual(answer_order, expected_order)
         self.assertTrue(all(answer["review_notes"] for answer in answers))
         self.assertTrue(all("specific metrics" in answer["answer"] for answer in answers))
@@ -536,9 +572,13 @@ class MvpFlowTest(unittest.TestCase):
         self.assertEqual(artifact["properties"]["artifact_type"], "Cover Letter")
         self.assertTrue(all(claim["knowledge_id"] for claim in claims))
         self.assertTrue(all(claim["evidence_refs"] for claim in claims))
-        self.assertTrue(all(claim["evidence_context"]["evidence_count"] == len(claim["evidence_refs"]) for claim in claims))
+        self.assertTrue(
+            all(claim["evidence_context"]["evidence_count"] == len(claim["evidence_refs"]) for claim in claims)
+        )
         claim_order = [(claim["support_strength"], claim["evidence_context"]["evidence_count"]) for claim in claims]
-        expected_order = sorted(claim_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1]))
+        expected_order = sorted(
+            claim_order, key=lambda item: ({"strong": 0, "moderate": 1, "weak": 2}[item[0]], -item[1])
+        )
         self.assertEqual(claim_order, expected_order)
         self.assertFalse("InternalToolX" in markdown)
         self.assertIn("unsupported metrics", markdown)
@@ -558,7 +598,12 @@ class MvpFlowTest(unittest.TestCase):
         self.assertEqual(dates, sorted(dates))
         self.assertTrue(all(milestone["knowledge_id"] for milestone in milestones))
         self.assertTrue(all(milestone["evidence_refs"] for milestone in milestones))
-        self.assertTrue(all(milestone["evidence_context"]["evidence_count"] == len(milestone["evidence_refs"]) for milestone in milestones))
+        self.assertTrue(
+            all(
+                milestone["evidence_context"]["evidence_count"] == len(milestone["evidence_refs"])
+                for milestone in milestones
+            )
+        )
         markdown = career_timeline_markdown(artifact)
         self.assertFalse("InternalToolX" in markdown)
         self.assertIn("records;", markdown)
@@ -578,7 +623,9 @@ class MvpFlowTest(unittest.TestCase):
         self.assertEqual(artifact["properties"]["artifact_type"], "Gap Analysis")
         self.assertTrue(all(claim["knowledge_id"] for claim in claims))
         self.assertTrue(all(claim["evidence_refs"] for claim in claims))
-        self.assertTrue(all(claim["evidence_context"]["evidence_count"] == len(claim["evidence_refs"]) for claim in claims))
+        self.assertTrue(
+            all(claim["evidence_context"]["evidence_count"] == len(claim["evidence_refs"]) for claim in claims)
+        )
         strength_counts = [claim["evidence_context"]["evidence_count"] for claim in sections["strengths"]]
         self.assertEqual(strength_counts, sorted(strength_counts, reverse=True))
         self.assertIn("Missing evidence is not treated as missing ability.", markdown)
@@ -594,7 +641,12 @@ class MvpFlowTest(unittest.TestCase):
             "format": "source_export_v1",
             "captured_at": "2026-01-01T00:00:00Z",
             "engineer": {"id": "engineer-1", "display_name": "Rodolpho", "primary_email_hash": "hash"},
-            "source": {"id": "job-descriptions-local", "type": "job_descriptions", "name": "Job Descriptions", "visibility": "artifact_safe"},
+            "source": {
+                "id": "job-descriptions-local",
+                "type": "job_descriptions",
+                "name": "Job Descriptions",
+                "visibility": "artifact_safe",
+            },
             "records": [
                 {
                     "source_entity_type": "job_description",
@@ -791,8 +843,18 @@ class MvpFlowTest(unittest.TestCase):
 
     def test_artifact_context_outputs_are_deterministic(self):
         evidence = [
-            {"properties": {"evidence_type": "WORK_ITEM_EXISTS", "metadata": {"title": "Amazon Java API", "technologies": ["Java"]}}},
-            {"properties": {"evidence_type": "WORK_ITEM_EXISTS", "metadata": {"title": "Magalu Java API", "technologies": ["Redis"]}}},
+            {
+                "properties": {
+                    "evidence_type": "WORK_ITEM_EXISTS",
+                    "metadata": {"title": "Amazon Java API", "technologies": ["Java"]},
+                }
+            },
+            {
+                "properties": {
+                    "evidence_type": "WORK_ITEM_EXISTS",
+                    "metadata": {"title": "Magalu Java API", "technologies": ["Redis"]},
+                }
+            },
         ]
         signals = extract_context_signals(evidence)
 
@@ -801,8 +863,20 @@ class MvpFlowTest(unittest.TestCase):
 
         clustered = cluster_technology_knowledge(
             [
-                {"properties": {"statement": "Practical experience with Shopee Integration.", "evidence_refs": ["e2", "e1"], "observation_refs": ["o2"]}},
-                {"properties": {"statement": "Practical experience with Magalu Integration.", "evidence_refs": ["e1", "e3"], "observation_refs": ["o1"]}},
+                {
+                    "properties": {
+                        "statement": "Practical experience with Shopee Integration.",
+                        "evidence_refs": ["e2", "e1"],
+                        "observation_refs": ["o2"],
+                    }
+                },
+                {
+                    "properties": {
+                        "statement": "Practical experience with Magalu Integration.",
+                        "evidence_refs": ["e1", "e3"],
+                        "observation_refs": ["o1"],
+                    }
+                },
             ]
         )
 

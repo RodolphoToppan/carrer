@@ -1,8 +1,7 @@
-from pathlib import Path
 import importlib.util
 import json
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("mcp_collect", ROOT / "scripts" / "mcp_collect.py")
@@ -27,7 +26,9 @@ class McpCollectTest(unittest.TestCase):
         self.assertIn("ORDER BY [System.CreatedDate] ASC", wiql)
 
     def test_normalizes_area_path_and_literal_technologies(self):
-        self.assertEqual(mcp_collect.readable_domain(r"Koncili\39-KON_BR_PRODUTO_INTEGRACAO"), "kon br produto integracao")
+        self.assertEqual(
+            mcp_collect.readable_domain(r"Koncili\39-KON_BR_PRODUTO_INTEGRACAO"), "kon br produto integracao"
+        )
         self.assertEqual(mcp_collect.technologies_from_text("Fix Java RabbitMQ retry flow"), ["Java", "RabbitMQ"])
         self.assertEqual(mcp_collect.stable_id({"b": 2, "a": 1}), mcp_collect.stable_id({"a": 1, "b": 2}))
 
@@ -61,7 +62,12 @@ class McpCollectTest(unittest.TestCase):
                     "System.History": "<div>Explained trade-off.</div>",
                     "Microsoft.VSTS.Common.AcceptanceCriteria": "<p>Retries are observable.</p>",
                 },
-                "relations": [{"rel": "System.LinkTypes.Hierarchy-Reverse", "url": "https://dev.azure.com/org/_apis/wit/workItems/42"}],
+                "relations": [
+                    {
+                        "rel": "System.LinkTypes.Hierarchy-Reverse",
+                        "url": "https://dev.azure.com/org/_apis/wit/workItems/42",
+                    }
+                ],
             }
         )
 
@@ -69,7 +75,9 @@ class McpCollectTest(unittest.TestCase):
         self.assertEqual(payload["description"], "Investigated RabbitMQ ordering.")
         self.assertEqual(payload["discussion"], "Explained trade-off.")
         self.assertEqual(payload["acceptance_criteria"], "Retries are observable.")
-        self.assertEqual(payload["relationships"], [{"type": "System.LinkTypes.Hierarchy-Reverse", "external_id": "ADO-WI-42"}])
+        self.assertEqual(
+            payload["relationships"], [{"type": "System.LinkTypes.Hierarchy-Reverse", "external_id": "ADO-WI-42"}]
+        )
         self.assertEqual(payload["technologies"], ["RabbitMQ"])
 
     def test_work_item_link_map_reads_wiql_relations(self):
@@ -130,14 +138,27 @@ class McpCollectTest(unittest.TestCase):
 
     def test_dedupe_records_returns_deterministic_order(self):
         records = [
-            {"source_entity_type": "work_item", "external_id": "2", "occurred_at": "2026-01-01T00:00:00Z", "payload": {}},
+            {
+                "source_entity_type": "work_item",
+                "external_id": "2",
+                "occurred_at": "2026-01-01T00:00:00Z",
+                "payload": {},
+            },
             {"source_entity_type": "commit", "external_id": "1", "occurred_at": "2026-01-01T00:00:00Z", "payload": {}},
-            {"source_entity_type": "work_item", "external_id": "1", "occurred_at": "2026-01-01T00:00:00Z", "payload": {}},
+            {
+                "source_entity_type": "work_item",
+                "external_id": "1",
+                "occurred_at": "2026-01-01T00:00:00Z",
+                "payload": {},
+            },
         ]
 
         ordered = mcp_collect.dedupe_records(records)
 
-        self.assertEqual([(record["source_entity_type"], record["external_id"]) for record in ordered], [("commit", "1"), ("work_item", "1"), ("work_item", "2")])
+        self.assertEqual(
+            [(record["source_entity_type"], record["external_id"]) for record in ordered],
+            [("commit", "1"), ("work_item", "1"), ("work_item", "2")],
+        )
 
 
 if __name__ == "__main__":

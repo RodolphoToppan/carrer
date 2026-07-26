@@ -5,10 +5,10 @@ import os
 import re
 import ssl
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +35,7 @@ TECHNOLOGY_KEYWORDS = {
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def technologies_from_text(*values: str) -> list[str]:
@@ -64,7 +64,9 @@ def require_env(env: dict[str, str], *names: str) -> None:
 
 def redact_sensitive(text: object) -> str:
     value = json.dumps(text, ensure_ascii=False) if isinstance(text, (dict, list)) else str(text)
-    value = re.sub(r'(?i)("?(?:token|private-token|personal_access_token)"?\s*[:=]\s*)"?[^",\s}]+"?', r'\1"<redacted>"', value)
+    value = re.sub(
+        r'(?i)("?(?:token|private-token|personal_access_token)"?\s*[:=]\s*)"?[^",\s}]+"?', r'\1"<redacted>"', value
+    )
     value = re.sub(r"(?i)(Bearer|Basic)\s+[A-Za-z0-9+/._~=-]+", r"\1 <redacted>", value)
     return value
 
@@ -114,7 +116,9 @@ class GitLab:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
-                raise RuntimeError(f"GitLab authentication failed ({exc.code}). Check GITLAB_PERSONAL_ACCESS_TOKEN.") from exc
+                raise RuntimeError(
+                    f"GitLab authentication failed ({exc.code}). Check GITLAB_PERSONAL_ACCESS_TOKEN."
+                ) from exc
             raise RuntimeError(f"GitLab API request failed ({exc.code}) for {path}.") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"GitLab API request failed for {path}: {redact_sensitive(exc.reason)}") from exc
@@ -230,7 +234,12 @@ def main() -> int:
     export = load_or_create_export(EXPORT_PATH, user)
     export = merge_records(export, records, gitlab_source)
     write_export(EXPORT_PATH, export)
-    print(json.dumps({"output": str(EXPORT_PATH), "gitlab_records": len(records), "total_records": len(export["records"])}, indent=2))
+    print(
+        json.dumps(
+            {"output": str(EXPORT_PATH), "gitlab_records": len(records), "total_records": len(export["records"])},
+            indent=2,
+        )
+    )
     return 0
 
 

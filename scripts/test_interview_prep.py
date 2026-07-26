@@ -92,6 +92,7 @@ def main() -> int:
         except Exception as e:
             print(f"  Error: {e}")
             import traceback
+
             traceback.print_exc()
             results.append({"job_title": jd_title, "error": str(e), "status": "FAIL"})
 
@@ -104,7 +105,9 @@ def main() -> int:
         status = "PASS" if result["status"] == "PASS" else "FAIL" if result["status"] == "FAIL" else "REVIEW"
         print(f"[{status}] {result['job_title']}")
         if result["status"] != "FAIL":
-            print(f"  Strengths: {result['strengths']}, Topics: {result['topics']}, Questions: {result['questions']}, Stories: {result['stories']}")
+            print(
+                f"  Strengths: {result['strengths']}, Topics: {result['topics']}, Questions: {result['questions']}, Stories: {result['stories']}"
+            )
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     print()

@@ -1,0 +1,300 @@
+# Product Glossary
+
+This document defines canonical terms used in Carrer's product and architecture.
+
+When the current implementation uses a term differently from the intended architecture, the difference is noted explicitly.
+
+## Core Concepts
+
+### Activity
+
+An activity is a discrete action performed by an engineer in a source system.
+
+Examples: committing code, opening a merge request, reviewing a pull request, creating documentation.
+
+**Architectural intent**: Activities are the raw inputs to the system.
+
+**Current implementation**: Activities are not yet modeled as a distinct concept. Evidence nodes currently represent the closest equivalent.
+
+### Contribution
+
+A contribution is a meaningful piece of work that produced a result.
+
+Examples: implementing a feature, fixing a bug, improving performance, writing documentation, making an architectural decision.
+
+**Architectural intent**: Contributions are derived from activities and evidence through inference.
+
+**Current implementation**: Contributions are not yet explicitly modeled. The system currently infers observations and knowledge, which conceptually include contributions.
+
+### Outcome
+
+An outcome is a result produced by a contribution.
+
+Examples: feature shipped, bug resolved, performance improved, system stabilized, documentation published.
+
+**Architectural intent**: Outcomes are factual results tied to contributions.
+
+**Current implementation**: Outcomes are inferred as part of observations and knowledge but are not yet a distinct entity.
+
+### Impact
+
+Impact is the operational or business effect of an outcome.
+
+Examples: reduced system latency, increased order processing throughput, improved developer productivity, reduced operational cost, enhanced system reliability.
+
+**Architectural intent**: Impact is measurable or observable change in system or business behavior.
+
+**Current implementation**: Impact signals are detected during inference and included in knowledge nodes. The system distinguishes between verified impact (directly observed in evidence) and probable impact (inferred from evidence).
+
+### Competency
+
+A competency is a demonstrated skill, knowledge area, or capability.
+
+Examples: backend development, API design, distributed systems, marketplace integrations, observability, production debugging.
+
+**Architectural intent**: Competencies are inferred from repeated contributions in specific domains or with specific technologies.
+
+**Current implementation**: Competencies are inferred during knowledge generation and represented as knowledge nodes with type `CompetencyKnowledge`.
+
+### Career Claim
+
+A career claim is a specific, artifact-ready statement about an engineer's experience, competency, or impact.
+
+Examples:
+
+* "Designed and implemented marketplace integration layer supporting 8 platforms"
+* "Architected asynchronous order processing system handling 30M+ orders per quarter"
+* "Led production debugging for critical e-commerce workflows"
+
+**Architectural intent**: Career claims are the bridge between knowledge and artifacts. They are concrete statements derived from accepted knowledge and ready for inclusion in resumes, LinkedIn profiles, STAR stories, etc.
+
+**Current implementation**: Career claims are not yet a distinct entity. Artifact generators currently produce statements directly from knowledge nodes.
+
+### Artifact
+
+An artifact is a generated professional document or section.
+
+Examples: resume, LinkedIn profile section, STAR story, interview answer, skill matrix, gap analysis.
+
+**Architectural intent**: Artifacts are composed of career claims and formatted for specific audiences.
+
+**Current implementation**: Artifact generators exist and produce formatted output from knowledge nodes. Artifacts reference knowledge nodes for traceability.
+
+## Evidence Layer
+
+### Source
+
+A source is an external system that provides raw data.
+
+Examples: Azure DevOps, GitLab, GitHub, Jira, Confluence, LinkedIn, resume, job description.
+
+**Current implementation**: Sources are represented as `SourceNode` entities in the evidence graph.
+
+### Collector
+
+A collector is a component that extracts data from a source and produces raw records.
+
+Examples: Azure DevOps collector, GitLab collector, GitHub collector.
+
+**Current implementation**: Collectors exist for Azure DevOps and GitLab. They produce `source_export_v1` format for ingestion.
+
+### Raw Record
+
+A raw record is the unprocessed data extracted from a source.
+
+**Current implementation**: Raw records are represented in `source_export_v1` JSON format before ingestion.
+
+### Evidence
+
+Evidence is an immutable fact extracted from a source system.
+
+Examples: a commit exists, a merge request was opened, a work item was assigned, a code review comment was made.
+
+**Architectural intent**: Evidence nodes are immutable after creation and stored in the evidence graph.
+
+**Current implementation**: Evidence nodes are represented as `EvidenceNode` entities. Immutability is enforced by raising an error if an update is attempted.
+
+### Evidence Graph
+
+The evidence graph is a persistent store of immutable evidence nodes and their relationships.
+
+**Architectural intent**: The evidence graph stores only facts, never interpretations.
+
+**Current implementation**: The evidence graph is implemented as a JSON-based graph store with nodes and edges. Evidence nodes are immutable.
+
+## Knowledge Layer
+
+### Observation
+
+An observation is a structured statement derived from one or more evidence nodes.
+
+Examples: "The engineer repeatedly modified modules related to marketplace integrations", "The engineer reviewed backend code involving asynchronous processing".
+
+**Architectural intent**: Observations are inferred patterns that bridge evidence and knowledge.
+
+**Current implementation**: Observations are generated during the inference phase and used to create knowledge nodes. They are not yet stored as distinct entities.
+
+### Inference Engine
+
+The inference engine analyzes evidence nodes and generates observations and knowledge.
+
+**Current implementation**: The inference engine exists as part of the `career_intelligence_mvp.py` implementation. It performs technology detection, domain enrichment, business domain extraction, impact signal detection, and architecture pattern detection.
+
+### Knowledge
+
+Knowledge is a versioned professional interpretation accepted by the system or the user.
+
+Examples: "The engineer has practical experience with marketplace integrations", "The engineer demonstrates backend architecture competency".
+
+**Architectural intent**: Knowledge nodes are versioned, regenerable, and traceable to evidence.
+
+**Current implementation**: Knowledge nodes exist as `TechnologyKnowledge`, `DomainKnowledge`, `ImpactKnowledge`, `ArchitectureKnowledge`, and `BusinessKnowledge` entities. They include privacy levels and evidence references.
+
+### Knowledge Graph
+
+The knowledge graph is a persistent store of versioned knowledge nodes and their relationships.
+
+**Architectural intent**: The knowledge graph stores interpretations, which may be regenerated at any time.
+
+**Current implementation**: The knowledge graph is part of the same graph store as evidence. Knowledge nodes are separate from evidence nodes and reference evidence nodes via edges.
+
+## Artifact Layer
+
+### Analysis Agent
+
+An analysis agent is a component that processes knowledge to produce insights or recommendations.
+
+Examples: Technology Agent, Impact Agent, Architecture Agent, Gap Analysis Agent.
+
+**Architectural intent**: Agents are single-purpose analyzers that operate on accepted knowledge.
+
+**Current implementation**: Agents are not yet implemented as separate components. Artifact generators currently perform both analysis and generation.
+
+### Artifact Generator
+
+An artifact generator produces formatted professional documents from accepted knowledge.
+
+Examples: Resume Generator, LinkedIn Generator, STAR Story Generator, Interview Answer Generator.
+
+**Current implementation**: Artifact generators exist for Resume, LinkedIn, STAR Stories, Interview Answers, Cover Letter, Career Timeline, and Gap Analysis. They produce formatted text with embedded traceability references.
+
+## Privacy and Trust
+
+### Privacy Level
+
+A privacy level categorizes information by its sensitivity and export eligibility.
+
+Levels:
+
+* **private** — never exported
+* **internal** — shown locally but not exported
+* **artifact_safe** — safe for public professional artifacts
+* **exported** — explicitly approved for external systems
+
+**Current implementation**: Privacy levels are assigned to knowledge nodes and enforced during artifact generation.
+
+### Redaction
+
+Redaction is the process of removing or anonymizing sensitive information before export.
+
+**Current implementation**: Evidence ingestion includes automatic redaction of tokens and secrets. Knowledge generation avoids private information.
+
+### Trust Boundary
+
+A trust boundary is a dividing line between different privacy zones.
+
+**Current implementation**: Trust boundaries are enforced at artifact generation time. Private and internal information is excluded from artifact-safe outputs.
+
+## Human Governance
+
+### Review
+
+Review is the process by which a human user evaluates and accepts, rejects, or edits generated content.
+
+**Current implementation**: Human review commands exist for individual knowledge nodes and for batch review. Review results are stored as audit records in the graph.
+
+### Audit Record
+
+An audit record is a log entry that captures a human decision or system action.
+
+**Current implementation**: Audit records are stored in the graph and include type, timestamp, actor, target references, result, and metadata.
+
+## Data Exchange
+
+### source_export_v1
+
+`source_export_v1` is the canonical format for importing evidence from external collectors.
+
+Format: JSON array of records with `source_type`, `source_name`, `record_type`, `record_id`, `timestamp`, and `data` fields.
+
+**Current implementation**: Both Azure DevOps and GitLab collectors produce `source_export_v1` format. The ingestion pipeline validates and imports records from this format.
+
+## System Boundaries
+
+### Local System
+
+The local system is the user's machine where Carrer runs.
+
+**Architectural intent**: Carrer is local-first. All evidence, knowledge, and artifacts are stored locally.
+
+**Current implementation**: The MVP is fully local. Data is stored in JSON files in the `.codex` directory.
+
+### External System
+
+An external system is any service or platform outside the local system.
+
+Examples: LLM APIs (OpenAI, Anthropic), source platforms (Azure DevOps, GitLab), job boards.
+
+**Architectural intent**: External systems are optional enhancements. The user controls what data is sent to external systems.
+
+**Current implementation**: The MVP does not yet integrate with external LLM APIs. Inference is currently rule-based and deterministic.
+
+## Terminology Notes
+
+### "Engineer" vs. "User"
+
+**Engineer**: The professional whose career is being analyzed.
+
+**User**: The person operating the Carrer system (often the same as the engineer, but could be a career coach or manager).
+
+In single-user scenarios, engineer and user are the same person.
+
+### "Artifact" vs. "Document"
+
+**Artifact**: The specific term used in Carrer's architecture for generated professional outputs.
+
+**Document**: A more general term that could refer to any file or text, including internal documentation.
+
+When discussing Carrer's outputs, use "artifact" for precision.
+
+### "Claim" vs. "Statement"
+
+**Claim**: A specific assertion about the engineer's experience, competency, or impact.
+
+**Statement**: A more general term for any textual output.
+
+In Carrer's architecture, "career claim" is the preferred term for artifact-ready assertions.
+
+## Deprecated or Avoided Terms
+
+### "Resume Builder"
+
+Avoid. Carrer is not a resume builder. It is a career intelligence platform. Resume is one output.
+
+### "Template"
+
+Avoid when discussing knowledge or evidence. Carrer does not rely on templates. It generates content from evidence and knowledge. "Template" may be used for artifact formatting, but not for content generation.
+
+### "Profile"
+
+Ambiguous. Prefer "LinkedIn profile section" or "professional profile" for clarity.
+
+### "AI-Generated"
+
+Use cautiously. Specify whether the generation is rule-based, LLM-based, or hybrid. Emphasize traceability and human review.
+
+## Conclusion
+
+This glossary will evolve as the product and architecture mature.
+
+When adding new terms, verify they do not conflict with existing definitions and update this glossary accordingly.

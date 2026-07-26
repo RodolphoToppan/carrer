@@ -1,10 +1,12 @@
-from pathlib import Path
 import importlib.util
 import json
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("import_job_descriptions", ROOT / "scripts" / "import_job_descriptions.py")
+SPEC = importlib.util.spec_from_file_location(
+    "import_job_descriptions", ROOT / "scripts" / "import_job_descriptions.py"
+)
 import_job_descriptions = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(import_job_descriptions)
 

@@ -6,7 +6,6 @@ Generates tailored resumes for all job descriptions and validates.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -136,7 +135,9 @@ def main() -> int:
         status_icon = "✅" if result["status"] == "PASS" else "❌" if result["status"] == "FAIL" else "⚠️"
         print(f"{status_icon} {result['job_title']}")
         if result["status"] != "FAIL":
-            print(f"   Match rate: {result['match_rate']:.0%}, Highlights: {result['highlights']}, Warnings: {result['warnings']}")
+            print(
+                f"   Match rate: {result['match_rate']:.0%}, Highlights: {result['highlights']}, Warnings: {result['warnings']}"
+            )
         else:
             print(f"   Error: {result.get('error', 'Unknown')}")
 

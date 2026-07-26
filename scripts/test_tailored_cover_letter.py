@@ -5,7 +5,6 @@ Test tailored cover letter generation for Sprint 5.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -98,7 +97,9 @@ def main() -> int:
         status = "PASS" if result["status"] == "PASS" else "FAIL" if result["status"] == "FAIL" else "REVIEW"
         print(f"[{status}] {result['job_title']}")
         if result["status"] != "FAIL":
-            print(f"  Claims: {result['claims']}, Match rate: {result['match_rate']:.0%}, Warnings: {result['warnings']}")
+            print(
+                f"  Claims: {result['claims']}, Match rate: {result['match_rate']:.0%}, Warnings: {result['warnings']}"
+            )
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     print()

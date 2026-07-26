@@ -87,6 +87,7 @@ def main() -> int:
         except Exception as e:
             print(f"  Error: {e}")
             import traceback
+
             traceback.print_exc()
             results.append({"job_title": jd_title, "error": str(e), "status": "FAIL"})
 

@@ -1,10 +1,10 @@
-from pathlib import Path
 import importlib.util
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 import sys
+
 sys.path.insert(0, str(ROOT / "src"))
 
 from career_intelligence_mvp import GraphStore, warning_summary
@@ -78,7 +78,12 @@ class CareerPipelineTest(unittest.TestCase):
         result = career_pipeline.ingest_job_descriptions(tmp, store)
 
         self.assertEqual(result["records"], 1)
-        self.assertTrue(any(item["properties"]["evidence_type"] == "JOB_DESCRIPTION_EXISTS" for item in store.nodes_by_type("EvidenceNode")))
+        self.assertTrue(
+            any(
+                item["properties"]["evidence_type"] == "JOB_DESCRIPTION_EXISTS"
+                for item in store.nodes_by_type("EvidenceNode")
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
-from pathlib import Path
 import importlib.util
-import urllib.error
 import unittest
+import urllib.error
+from pathlib import Path
 from unittest.mock import patch
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("collect_gitlab_user", ROOT / "scripts" / "collect_gitlab_user.py")
@@ -29,7 +28,11 @@ class CollectGitLabUserTest(unittest.TestCase):
             {
                 "project_id": 1,
                 "created_at": "2026-01-01T00:00:00Z",
-                "push_data": {"commit_to": "abc123", "commit_title": "Fix Java RabbitMQ retry flow", "ref": "feature/retry"},
+                "push_data": {
+                    "commit_to": "abc123",
+                    "commit_title": "Fix Java RabbitMQ retry flow",
+                    "ref": "feature/retry",
+                },
             }
         )
 
@@ -52,7 +55,9 @@ class CollectGitLabUserTest(unittest.TestCase):
 
     def test_missing_gitlab_env_fails_fast(self):
         with self.assertRaises(SystemExit) as context:
-            collect_gitlab_user.require_env({"GITLAB_API_URL": "https://gitlab.example/api/v4"}, "GITLAB_API_URL", "GITLAB_PERSONAL_ACCESS_TOKEN")
+            collect_gitlab_user.require_env(
+                {"GITLAB_API_URL": "https://gitlab.example/api/v4"}, "GITLAB_API_URL", "GITLAB_PERSONAL_ACCESS_TOKEN"
+            )
 
         self.assertIn("GITLAB_PERSONAL_ACCESS_TOKEN", str(context.exception))
 
@@ -64,12 +69,13 @@ class CollectGitLabUserTest(unittest.TestCase):
         self.assertNotIn("abc123", text)
 
     def test_gitlab_auth_error_is_clear(self):
-        gitlab = collect_gitlab_user.GitLab({"GITLAB_API_URL": "https://gitlab.example/api/v4", "GITLAB_PERSONAL_ACCESS_TOKEN": "secret-token"})
+        gitlab = collect_gitlab_user.GitLab(
+            {"GITLAB_API_URL": "https://gitlab.example/api/v4", "GITLAB_PERSONAL_ACCESS_TOKEN": "secret-token"}
+        )
         error = urllib.error.HTTPError("https://gitlab.example/api/v4/user", 401, "Unauthorized", {}, None)
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with self.assertRaises(RuntimeError) as context:
-                gitlab.get("/user")
+        with patch("urllib.request.urlopen", side_effect=error), self.assertRaises(RuntimeError) as context:
+            gitlab.get("/user")
 
         self.assertIn("GitLab authentication failed (401)", str(context.exception))
         self.assertNotIn("secret-token", str(context.exception))
@@ -79,7 +85,9 @@ class CollectGitLabUserTest(unittest.TestCase):
         if missing_path.exists():
             missing_path.unlink()
 
-        export = collect_gitlab_user.load_or_create_export(missing_path, {"id": 7, "username": "rtoppan", "name": "Rodolpho"})
+        export = collect_gitlab_user.load_or_create_export(
+            missing_path, {"id": 7, "username": "rtoppan", "name": "Rodolpho"}
+        )
 
         self.assertEqual(export["format"], "source_export_v1")
         self.assertEqual(export["source"]["type"], "gitlab_user_api")
@@ -123,14 +131,35 @@ class CollectGitLabUserTest(unittest.TestCase):
     def test_merge_records_returns_deterministic_order(self):
         export = collect_gitlab_user.new_export({"id": 7, "username": "rtoppan"})
         records = [
-            {"source_entity_type": "merge_request", "external_id": "2", "occurred_at": "2026-01-01T00:00:00Z", "privacy_level": "internal", "payload": {}},
-            {"source_entity_type": "commit", "external_id": "1", "occurred_at": "2026-01-01T00:00:00Z", "privacy_level": "internal", "payload": {}},
-            {"source_entity_type": "merge_request", "external_id": "1", "occurred_at": "2026-01-01T00:00:00Z", "privacy_level": "internal", "payload": {}},
+            {
+                "source_entity_type": "merge_request",
+                "external_id": "2",
+                "occurred_at": "2026-01-01T00:00:00Z",
+                "privacy_level": "internal",
+                "payload": {},
+            },
+            {
+                "source_entity_type": "commit",
+                "external_id": "1",
+                "occurred_at": "2026-01-01T00:00:00Z",
+                "privacy_level": "internal",
+                "payload": {},
+            },
+            {
+                "source_entity_type": "merge_request",
+                "external_id": "1",
+                "occurred_at": "2026-01-01T00:00:00Z",
+                "privacy_level": "internal",
+                "payload": {},
+            },
         ]
 
         merged = collect_gitlab_user.merge_records(export, records)
 
-        self.assertEqual([(record["source_entity_type"], record["external_id"]) for record in merged["records"]], [("commit", "1"), ("merge_request", "1"), ("merge_request", "2")])
+        self.assertEqual(
+            [(record["source_entity_type"], record["external_id"]) for record in merged["records"]],
+            [("commit", "1"), ("merge_request", "1"), ("merge_request", "2")],
+        )
 
     def test_merge_records_validates_existing_export_contract(self):
         with self.assertRaises(ValueError) as context:

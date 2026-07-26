@@ -135,24 +135,30 @@ It is the first executable proof of the approved architecture **validated with r
 
 ## How To Use It Now
 
-### 1. Requirements
+### 1. Setup Development Environment
 
-You only need Python 3 and pytest.
+The project is now properly packaged with development tools configured.
 
-No virtual environment is required for the current MVP because it uses only the
-Python standard library and pytest.
+**Requirements:**
+- Python 3.12 or higher
+- Git
 
-Check Python:
-
-```bash
-python --version
-```
-
-Install pytest:
+**Installation:**
 
 ```bash
-python -m pip install pytest
+# Clone the repository
+git clone https://github.com/RodolphoToppan/carrer.git
+cd carrer
+
+# Install the project with development dependencies
+python -m pip install -e ".[dev]"
 ```
+
+This installs:
+- The `career_intelligence_mvp` module
+- pytest and pytest-cov for testing
+- ruff for linting and formatting
+- mypy for type checking
 
 ### 2. Run The MVP
 
@@ -190,17 +196,57 @@ Expected output (real data):
 ### 3. Run The Tests
 
 ```bash
-# All tests with pytest
+# All tests
 python -m pytest tests/ -v
 
-# Or using unittest
-python -m unittest discover -s tests
+# With coverage report
+python -m pytest tests/ --cov=src --cov-report=term-missing
+
+# Single test file
+python -m pytest tests/test_mvp_flow.py -v
 ```
 
 Expected output:
 
 ```text
-54 passed
+76 passed, 1 failed (expected - requires data file)
+```
+
+### 4. Development Commands
+
+**Linting:**
+
+```bash
+# Check code quality
+python -m ruff check src/ scripts/ tests/
+
+# Auto-fix issues
+python -m ruff check src/ scripts/ tests/ --fix
+
+# Check formatting
+python -m ruff format --check src/ scripts/ tests/
+
+# Apply formatting
+python -m ruff format src/ scripts/ tests/
+```
+
+**Type Checking:**
+
+```bash
+# Type check main source
+python -m mypy src/
+
+# Note: Type coverage is partial. This is a work in progress.
+```
+
+**Run All Quality Checks:**
+
+```bash
+# Complete quality pipeline
+python -m ruff check src/ scripts/ tests/
+python -m ruff format --check src/ scripts/ tests/
+python -m mypy src/
+python -m pytest tests/ -v
 ```
 
 ## What The Current MVP Does
@@ -471,7 +517,7 @@ python scripts/career_pipeline.py
 Optional filters:
 
 ```bash
-python scripts/mcp_collect.py collect-azure --work-items-top 1000 --commit-author "rodolpho.toppan@db1.com.br" --branch-filter rodolpho
+python scripts/mcp_collect.py collect-azure --work-items-top 1000 --commit-author "your.email@example.com" --branch-filter your-username
 ```
 
 To reuse an Azure Boards query, paste its WIQL into `examples/my_azure_cards.wiql` and run:
@@ -671,7 +717,7 @@ python scripts/career_pipeline.py --job-descriptions path/to/job-descriptions
 Check Sprint 4 validation status:
 
 ```bash
-python scripts/project_status.py
+python scripts/check_knowledge_status.py
 ```
 
 Supported initial `source_entity_type` values:

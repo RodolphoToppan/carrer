@@ -1,18 +1,19 @@
-from pathlib import Path
 import sys
+from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from career_intelligence_mvp import (
     GraphStore,
-    generate_skill_matrix,
-    generate_resume_draft,
-    generate_linkedin_draft,
     artifact_markdown,
-    resume_markdown,
-    linkedin_markdown,
     artifact_traceability_markdown,
-    validate_artifact,
     artifact_validation_markdown,
+    generate_linkedin_draft,
+    generate_resume_draft,
+    generate_skill_matrix,
+    linkedin_markdown,
+    resume_markdown,
+    validate_artifact,
 )
 
 # Load graph
@@ -37,12 +38,8 @@ Path("data/linkedin_draft.md").write_text(linkedin_markdown(linkedin), encoding=
 Path("data/skill_matrix_traceability.md").write_text(
     artifact_traceability_markdown(skill_matrix, store), encoding="utf-8"
 )
-Path("data/resume_traceability.md").write_text(
-    artifact_traceability_markdown(resume, store), encoding="utf-8"
-)
-Path("data/linkedin_traceability.md").write_text(
-    artifact_traceability_markdown(linkedin, store), encoding="utf-8"
-)
+Path("data/resume_traceability.md").write_text(artifact_traceability_markdown(resume, store), encoding="utf-8")
+Path("data/linkedin_traceability.md").write_text(artifact_traceability_markdown(linkedin, store), encoding="utf-8")
 
 # Write validation
 skill_warnings = validate_artifact(skill_matrix, store)
@@ -52,9 +49,7 @@ linkedin_warnings = validate_artifact(linkedin, store)
 Path("data/skill_matrix_validation.md").write_text(
     artifact_validation_markdown(skill_matrix, skill_warnings), encoding="utf-8"
 )
-Path("data/resume_validation.md").write_text(
-    artifact_validation_markdown(resume, resume_warnings), encoding="utf-8"
-)
+Path("data/resume_validation.md").write_text(artifact_validation_markdown(resume, resume_warnings), encoding="utf-8")
 Path("data/linkedin_validation.md").write_text(
     artifact_validation_markdown(linkedin, linkedin_warnings), encoding="utf-8"
 )
@@ -62,4 +57,3 @@ Path("data/linkedin_validation.md").write_text(
 print(f"Done! Generated {len(skill_matrix['properties']['rows'])} skill matrix rows")
 print(f"Resume highlights: {len(resume['properties']['sections']['highlights'])}")
 print(f"LinkedIn highlights: {len(linkedin['properties']['sections']['highlights'])}")
-

@@ -1,10 +1,18 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from career_intelligence_mvp import GraphStore, generate_knowledge, generate_skill_matrix, review_items, review_node, reviewable_items, set_knowledge_privacy
+from career_intelligence_mvp import (
+    GraphStore,
+    generate_knowledge,
+    generate_skill_matrix,
+    review_items,
+    review_node,
+    reviewable_items,
+    set_knowledge_privacy,
+)
 
 
 def print_items(store: GraphStore) -> None:
@@ -19,7 +27,9 @@ def print_items(store: GraphStore) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python scripts/review.py <store.json> list|approve|reject|approve-all|reject-all|set-privacy|set-privacy-all [args]")
+        print(
+            "Usage: python scripts/review.py <store.json> list|approve|reject|approve-all|reject-all|set-privacy|set-privacy-all [args]"
+        )
         raise SystemExit(2)
 
     store_path = Path(sys.argv[1])
@@ -44,7 +54,9 @@ if __name__ == "__main__":
 
     if action == "set-privacy":
         if len(sys.argv) < 5:
-            print("Usage: python scripts/review.py <store.json> set-privacy <knowledge_id> <private|internal|artifact_safe|exported> [reason]")
+            print(
+                "Usage: python scripts/review.py <store.json> set-privacy <knowledge_id> <private|internal|artifact_safe|exported> [reason]"
+            )
             raise SystemExit(2)
         node_id = sys.argv[3]
         privacy_level = sys.argv[4]
@@ -57,7 +69,9 @@ if __name__ == "__main__":
 
     if action == "set-privacy-all":
         if len(sys.argv) < 4:
-            print("Usage: python scripts/review.py <store.json> set-privacy-all <private|internal|artifact_safe|exported> [reason]")
+            print(
+                "Usage: python scripts/review.py <store.json> set-privacy-all <private|internal|artifact_safe|exported> [reason]"
+            )
             raise SystemExit(2)
         privacy_level = sys.argv[3]
         reason = " ".join(sys.argv[4:])
@@ -73,7 +87,9 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     if action not in {"approve", "reject"} or len(sys.argv) < 4:
-        print("Usage: python scripts/review.py <store.json> list|approve|reject|approve-all|reject-all|set-privacy|set-privacy-all [args]")
+        print(
+            "Usage: python scripts/review.py <store.json> list|approve|reject|approve-all|reject-all|set-privacy|set-privacy-all [args]"
+        )
         raise SystemExit(2)
 
     node_id = sys.argv[3]

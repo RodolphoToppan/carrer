@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate all artifacts from accepted knowledge"""
+
 import sys
 from pathlib import Path
 
@@ -8,25 +9,25 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from career_intelligence_mvp import (
     GraphStore,
-    generate_skill_matrix,
-    generate_resume_draft,
-    generate_linkedin_draft,
-    generate_star_stories_draft,
-    generate_interview_answers_draft,
-    generate_cover_letter_draft,
-    generate_career_timeline_draft,
-    generate_gap_analysis_draft,
     artifact_markdown,
-    resume_markdown,
-    linkedin_markdown,
-    star_stories_markdown,
-    interview_answers_markdown,
-    cover_letter_markdown,
-    career_timeline_markdown,
-    gap_analysis_markdown,
     artifact_traceability_markdown,
-    validate_artifact,
     artifact_validation_markdown,
+    career_timeline_markdown,
+    cover_letter_markdown,
+    gap_analysis_markdown,
+    generate_career_timeline_draft,
+    generate_cover_letter_draft,
+    generate_gap_analysis_draft,
+    generate_interview_answers_draft,
+    generate_linkedin_draft,
+    generate_resume_draft,
+    generate_skill_matrix,
+    generate_star_stories_draft,
+    interview_answers_markdown,
+    linkedin_markdown,
+    resume_markdown,
+    star_stories_markdown,
+    validate_artifact,
     warning_summary,
 )
 
@@ -91,7 +92,7 @@ def main():
     (output_dir / "resume_traceability.md").write_text(resume_trace, encoding="utf-8")
     (output_dir / "resume_validation.md").write_text(resume_validation, encoding="utf-8")
 
-    highlights_count = len(resume['properties']['sections']['highlights'])
+    highlights_count = len(resume["properties"]["sections"]["highlights"])
     print(f"Resume saved ({highlights_count} highlights)")
 
     # Save LinkedIn
@@ -105,7 +106,7 @@ def main():
     (output_dir / "linkedin_traceability.md").write_text(linkedin_trace, encoding="utf-8")
     (output_dir / "linkedin_validation.md").write_text(linkedin_validation, encoding="utf-8")
 
-    linkedin_highlights = len(linkedin['properties']['sections']['highlights'])
+    linkedin_highlights = len(linkedin["properties"]["sections"]["highlights"])
     print(f"LinkedIn saved ({linkedin_highlights} highlights)")
 
     # Save STAR Stories
@@ -119,7 +120,7 @@ def main():
     (output_dir / "star_stories_traceability.md").write_text(star_stories_trace, encoding="utf-8")
     (output_dir / "star_stories_validation.md").write_text(star_stories_validation, encoding="utf-8")
 
-    stories_count = len(star_stories['properties']['sections']['stories'])
+    stories_count = len(star_stories["properties"]["sections"]["stories"])
     print(f"STAR Stories saved ({stories_count} stories)")
 
     # Save Interview Answers
@@ -133,7 +134,7 @@ def main():
     (output_dir / "interview_answers_traceability.md").write_text(interview_answers_trace, encoding="utf-8")
     (output_dir / "interview_answers_validation.md").write_text(interview_answers_validation, encoding="utf-8")
 
-    answers_count = len(interview_answers['properties']['sections']['answers'])
+    answers_count = len(interview_answers["properties"]["sections"]["answers"])
     print(f"Interview Answers saved ({answers_count} answers)")
 
     # Save Cover Letter
@@ -147,7 +148,7 @@ def main():
     (output_dir / "cover_letter_traceability.md").write_text(cover_letter_trace, encoding="utf-8")
     (output_dir / "cover_letter_validation.md").write_text(cover_letter_validation, encoding="utf-8")
 
-    cover_letter_claims = len(cover_letter['properties']['sections']['claims'])
+    cover_letter_claims = len(cover_letter["properties"]["sections"]["claims"])
     print(f"Cover Letter saved ({cover_letter_claims} claims)")
 
     # Save Career Timeline
@@ -161,7 +162,7 @@ def main():
     (output_dir / "career_timeline_traceability.md").write_text(career_timeline_trace, encoding="utf-8")
     (output_dir / "career_timeline_validation.md").write_text(career_timeline_validation, encoding="utf-8")
 
-    timeline_count = len(career_timeline['properties']['sections']['milestones'])
+    timeline_count = len(career_timeline["properties"]["sections"]["milestones"])
     print(f"Career Timeline saved ({timeline_count} milestones)")
 
     # Save Gap Analysis
@@ -175,8 +176,8 @@ def main():
     (output_dir / "gap_analysis_traceability.md").write_text(gap_analysis_trace, encoding="utf-8")
     (output_dir / "gap_analysis_validation.md").write_text(gap_analysis_validation, encoding="utf-8")
 
-    strengths_count = len(gap_analysis['properties']['sections']['strengths'])
-    weak_count = len(gap_analysis['properties']['sections']['weak_evidence'])
+    strengths_count = len(gap_analysis["properties"]["sections"]["strengths"])
+    weak_count = len(gap_analysis["properties"]["sections"]["weak_evidence"])
     print(f"Gap Analysis saved ({strengths_count} strengths, {weak_count} weak-evidence items)")
     store.save(graph_path)
 
@@ -184,7 +185,7 @@ def main():
         print(line)
 
     # Summary
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print(f"Evidence nodes: {len(store.nodes_by_type('EvidenceNode'))}")
     print(f"Observation nodes: {len(store.nodes_by_type('ObservationNode'))}")
     print(f"Knowledge nodes: {len(store.nodes_by_type('KnowledgeNode'))}")
@@ -196,4 +197,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

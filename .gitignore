@@ -1,14 +1,52 @@
+# Environment and credentials
 .env
 .env.*
 !.env.example
 
+# Local configuration
 .codex/env.local.ps1
 .codex/env.local.sh
 
+# IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
 
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.pytype/
+venv/
+env/
+ENV/
 
+# Data and temporary files
 data/
 tmp/
+.temp/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated artifacts (personal)
+*.pdf
+*.docx
+examples/fixtures/my_*.json
+examples/fixtures/my_*.csv

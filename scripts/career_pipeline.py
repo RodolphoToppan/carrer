@@ -43,10 +43,11 @@ import import_job_descriptions
 
 from career_intelligence_mvp import (
     artifact_markdown,
-    artifact_validation_markdown,
     artifact_traceability_markdown,
+    artifact_validation_markdown,
     career_timeline_markdown,
     cover_letter_markdown,
+    gap_analysis_markdown,
     generate_career_timeline_draft,
     generate_cover_letter_draft,
     generate_gap_analysis_draft,
@@ -54,7 +55,6 @@ from career_intelligence_mvp import (
     generate_linkedin_draft,
     generate_resume_draft,
     generate_star_stories_draft,
-    gap_analysis_markdown,
     ingest_fixture,
     interview_answers_markdown,
     linkedin_markdown,
@@ -109,7 +109,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.refresh_azure or args.refresh_all:
-        subprocess.run([sys.executable, str(ROOT / "scripts" / "mcp_collect.py"), "collect-azure"], cwd=ROOT, check=True)
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "mcp_collect.py"), "collect-azure"], cwd=ROOT, check=True
+        )
     if args.refresh_gitlab or args.refresh_all:
         subprocess.run([sys.executable, str(ROOT / "scripts" / "collect_gitlab_user.py")], cwd=ROOT, check=True)
 
@@ -194,11 +196,21 @@ def main() -> int:
     artifact_validation_file = write_validation_output(artifact, artifact_warnings, SKILL_MATRIX_VALIDATION_PATH)
     resume_validation_file = write_validation_output(resume, resume_warnings, RESUME_VALIDATION_PATH)
     linkedin_validation_file = write_validation_output(linkedin, linkedin_warnings, LINKEDIN_VALIDATION_PATH)
-    star_stories_validation_file = write_validation_output(star_stories, star_stories_warnings, STAR_STORIES_VALIDATION_PATH)
-    interview_answers_validation_file = write_validation_output(interview_answers, interview_answers_warnings, INTERVIEW_ANSWERS_VALIDATION_PATH)
-    cover_letter_validation_file = write_validation_output(cover_letter, cover_letter_warnings, COVER_LETTER_VALIDATION_PATH)
-    career_timeline_validation_file = write_validation_output(career_timeline, career_timeline_warnings, CAREER_TIMELINE_VALIDATION_PATH)
-    gap_analysis_validation_file = write_validation_output(gap_analysis, gap_analysis_warnings, GAP_ANALYSIS_VALIDATION_PATH)
+    star_stories_validation_file = write_validation_output(
+        star_stories, star_stories_warnings, STAR_STORIES_VALIDATION_PATH
+    )
+    interview_answers_validation_file = write_validation_output(
+        interview_answers, interview_answers_warnings, INTERVIEW_ANSWERS_VALIDATION_PATH
+    )
+    cover_letter_validation_file = write_validation_output(
+        cover_letter, cover_letter_warnings, COVER_LETTER_VALIDATION_PATH
+    )
+    career_timeline_validation_file = write_validation_output(
+        career_timeline, career_timeline_warnings, CAREER_TIMELINE_VALIDATION_PATH
+    )
+    gap_analysis_validation_file = write_validation_output(
+        gap_analysis, gap_analysis_warnings, GAP_ANALYSIS_VALIDATION_PATH
+    )
     store.save(GRAPH_PATH)
 
     print(summarize_export())
@@ -242,7 +254,9 @@ def main() -> int:
     print(f"gap_analysis_strengths: {len(gap_analysis['properties']['sections']['strengths'])}")
     print(f"gap_analysis_weak_evidence: {len(gap_analysis['properties']['sections']['weak_evidence'])}")
     print(f"gap_analysis_matched_requirements: {len(gap_analysis['properties']['sections']['matched_requirements'])}")
-    print(f"gap_analysis_unmatched_requirements: {len(gap_analysis['properties']['sections']['unmatched_requirements'])}")
+    print(
+        f"gap_analysis_unmatched_requirements: {len(gap_analysis['properties']['sections']['unmatched_requirements'])}"
+    )
     print(f"gap_analysis_file: {gap_analysis_file}")
     print(f"gap_analysis_traceability_file: {gap_analysis_traceability_file}")
     print(f"gap_analysis_validation_warnings: {warning_summary(gap_analysis_warnings)}")

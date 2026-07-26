@@ -3,19 +3,20 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from career_intelligence_mvp import validate_source_export_v1
 from mcp_collect import technologies_from_text
+
+from career_intelligence_mvp import validate_source_export_v1
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def title_from_text(path: Path, text: str) -> str:
@@ -44,7 +45,7 @@ def file_to_record(path: Path) -> dict:
     return {
         "source_entity_type": "job_description",
         "external_id": f"JD-{slug(path.stem)}",
-        "occurred_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
+        "occurred_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
         "privacy_level": "artifact_safe",
         "payload": {
             "title": title,

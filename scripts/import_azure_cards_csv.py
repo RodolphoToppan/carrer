@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +13,7 @@ from mcp_collect import technologies_from_text
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def split_tags(value: str) -> list[str]:
@@ -29,7 +29,10 @@ def first_existing(row: dict, *names: str) -> str:
 
 def relationships(row: dict) -> list[dict]:
     items = []
-    for column, rel_type in (("Parent", "System.LinkTypes.Hierarchy-Reverse"), ("Parent ID", "System.LinkTypes.Hierarchy-Reverse")):
+    for column, rel_type in (
+        ("Parent", "System.LinkTypes.Hierarchy-Reverse"),
+        ("Parent ID", "System.LinkTypes.Hierarchy-Reverse"),
+    ):
         if row.get(column):
             items.append({"type": rel_type, "external_id": f"ADO-WI-{row[column]}"})
     return items
@@ -65,7 +68,9 @@ def row_to_record(row: dict) -> dict:
             "acceptance_criteria": acceptance_criteria,
             "relationships": relationships(row),
             "domain": work_type.lower() or "azure boards",
-            "technologies": technologies_from_text(row.get("Title", ""), " ".join(tags), description, discussion, acceptance_criteria),
+            "technologies": technologies_from_text(
+                row.get("Title", ""), " ".join(tags), description, discussion, acceptance_criteria
+            ),
         },
     }
 
@@ -95,6 +100,8 @@ def convert(input_path: Path, output_path: Path) -> dict:
 
 
 if __name__ == "__main__":
-    input_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\Users\rodolpho.toppan\Desktop\todosmeuscards.csv")
+    input_path = (
+        Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\Users\rodolpho.toppan\Desktop\todosmeuscards.csv")
+    )
     result = convert(input_path, ROOT / "data" / "career_source_export.json")
     print(json.dumps(result, indent=2, ensure_ascii=False))

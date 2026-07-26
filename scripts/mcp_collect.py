@@ -9,10 +9,9 @@ import re
 import subprocess
 import sys
 import threading
-from shutil import which
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
+from shutil import which
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -46,13 +45,17 @@ def load_ps_env(path: Path) -> dict[str, str]:
             value = match.group(2).replace("$PSScriptRoot", str(path.parent))
             env[match.group(1)] = str(Path(value).resolve()) if "\\" in value else value
     if env.get("AZURE_DEVOPS_EXT_PAT") and not env.get("PERSONAL_ACCESS_TOKEN"):
-        env["PERSONAL_ACCESS_TOKEN"] = base64.b64encode(f":{env['AZURE_DEVOPS_EXT_PAT']}".encode("utf-8")).decode("ascii")
+        env["PERSONAL_ACCESS_TOKEN"] = base64.b64encode(f":{env['AZURE_DEVOPS_EXT_PAT']}".encode()).decode("ascii")
     return env
 
 
 def redact_sensitive(text: object) -> str:
     value = json.dumps(text, ensure_ascii=False) if isinstance(text, (dict, list)) else str(text)
-    value = re.sub(r'(?i)("?(?:pat|token|authorization|private-token|personal_access_token)"?\s*[:=]\s*)"?[^",\s}]+"?', r'\1"<redacted>"', value)
+    value = re.sub(
+        r'(?i)("?(?:pat|token|authorization|private-token|personal_access_token)"?\s*[:=]\s*)"?[^",\s}]+"?',
+        r'\1"<redacted>"',
+        value,
+    )
     value = re.sub(r"(?i)(Bearer|Basic)\s+[A-Za-z0-9+/._~=-]+", r"\1 <redacted>", value)
     return value
 
@@ -250,7 +253,9 @@ def work_item_record(item: dict, relationships: list[dict] | None = None) -> dic
             "discussion": discussion,
             "acceptance_criteria": acceptance_criteria,
             "relationships": relationships if relationships is not None else work_item_relationships(item),
-            "technologies": technologies_from_text(title, fields.get("System.Tags", ""), description, discussion, acceptance_criteria),
+            "technologies": technologies_from_text(
+                title, fields.get("System.Tags", ""), description, discussion, acceptance_criteria
+            ),
         },
     }
 
@@ -264,7 +269,9 @@ def work_item_relationships(item: dict) -> list[dict]:
     relationships = []
     for relation in item.get("relations", []) or []:
         if relation.get("external_id"):
-            relationships.append({"type": relation.get("rel", relation.get("type", "")), "external_id": relation["external_id"]})
+            relationships.append(
+                {"type": relation.get("rel", relation.get("type", "")), "external_id": relation["external_id"]}
+            )
             continue
         url = relation.get("url", "")
         match = re.search(r"/workItems/(\d+)$", url)
@@ -390,10 +397,17 @@ def stable_id(value: object) -> str:
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def collect_azure(client: McpClient, output_path: Path, work_items_top: int, commit_author: str, branch_filter: str, wiql_file: str | None) -> dict:
+def collect_azure(
+    client: McpClient,
+    output_path: Path,
+    work_items_top: int,
+    commit_author: str,
+    branch_filter: str,
+    wiql_file: str | None,
+) -> dict:
     captured_at = now()
     records = []
 
@@ -420,7 +434,10 @@ def collect_azure(client: McpClient, output_path: Path, work_items_top: int, com
                 work_id = item.get("id") or fields.get("System.Id")
                 records.append(work_item_record(item, links.get(work_id, [])))
     if not records and not wiql_file:
-        work_items = client.call_tool("wit_my_work_items", {"project": PROJECT, "type": "myactivity", "top": work_items_top, "includeCompleted": True})
+        work_items = client.call_tool(
+            "wit_my_work_items",
+            {"project": PROJECT, "type": "myactivity", "top": work_items_top, "includeCompleted": True},
+        )
         work_item_ids = [item["id"] for item in work_items.get("results", [])] if isinstance(work_items, dict) else []
         links = work_item_link_map(client, work_item_ids)
         for start in range(0, len(work_item_ids), 200):
@@ -440,7 +457,9 @@ def collect_azure(client: McpClient, output_path: Path, work_items_top: int, com
     repos = client.call_tool("repo_list_repos_by_project", {"project": PROJECT, "top": 20})
     repo_list = repos if isinstance(repos, list) else []
     for repo in repo_list:
-        branches = client.call_tool("repo_list_branches_by_repo", {"repositoryId": repo["id"], "top": 100, "filterContains": branch_filter})
+        branches = client.call_tool(
+            "repo_list_branches_by_repo", {"repositoryId": repo["id"], "top": 100, "filterContains": branch_filter}
+        )
         if isinstance(branches, list):
             records.extend(branch_record(branch, repo["name"]) for branch in branches)
         prs = client.call_tool(
@@ -452,7 +471,13 @@ def collect_azure(client: McpClient, output_path: Path, work_items_top: int, com
         for author_key in ("author", "committer"):
             commits = client.call_tool(
                 "repo_search_commits",
-                {"project": PROJECT, "repository": repo["id"], "top": 100, "includeWorkItems": True, author_key: commit_author},
+                {
+                    "project": PROJECT,
+                    "repository": repo["id"],
+                    "top": 100,
+                    "includeWorkItems": True,
+                    author_key: commit_author,
+                },
             )
             if isinstance(commits, list):
                 records.extend(commit_record(commit, repo["name"]) for commit in commits)
@@ -529,12 +554,26 @@ def commit_identities(commits: object) -> list[dict]:
 def main() -> int:
     global PROJECT
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["list-tools", "list-gitlab-tools", "describe-gitlab-tools", "describe-tools", "call-tool", "inspect-small", "inspect-code", "inspect-identity", "inspect-workitems-wiql", "collect-azure"])
+    parser.add_argument(
+        "command",
+        choices=[
+            "list-tools",
+            "list-gitlab-tools",
+            "describe-gitlab-tools",
+            "describe-tools",
+            "call-tool",
+            "inspect-small",
+            "inspect-code",
+            "inspect-identity",
+            "inspect-workitems-wiql",
+            "collect-azure",
+        ],
+    )
     parser.add_argument("tool", nargs="?")
     parser.add_argument("tool_args", nargs="?", default="{}")
     parser.add_argument("--work-items-top", type=int, default=10000)
-    parser.add_argument("--commit-author", default="rodolpho.toppan@db1.com.br")
-    parser.add_argument("--branch-filter", default="rodolpho")
+    parser.add_argument("--commit-author", help="Commit author email filter")
+    parser.add_argument("--branch-filter", help="Branch name filter")
     parser.add_argument("--wiql-file")
     args = parser.parse_args()
 
@@ -579,7 +618,10 @@ def main() -> int:
             calls = [
                 ("wit_my_work_items", {"project": PROJECT, "type": "myactivity", "top": 5, "includeCompleted": True}),
                 ("repo_list_repos_by_project", {"project": PROJECT, "top": 5}),
-                ("repo_list_pull_requests_by_repo_or_project", {"project": PROJECT, "top": 5, "status": "All", "created_by_me": True}),
+                (
+                    "repo_list_pull_requests_by_repo_or_project",
+                    {"project": PROJECT, "top": 5, "status": "All", "created_by_me": True},
+                ),
             ]
             output = {}
             for name, arguments in calls:
@@ -590,14 +632,31 @@ def main() -> int:
             repo = repos[0]
             output = {
                 "repo": repo["name"],
-                "branches": client.call_tool("repo_list_branches_by_repo", {"repositoryId": repo["id"], "top": 5, "filterContains": args.branch_filter}),
-                "commits_author": client.call_tool("repo_search_commits", {"project": PROJECT, "repository": repo["id"], "top": 5, "author": args.commit_author}),
-                "commits_committer": client.call_tool("repo_search_commits", {"project": PROJECT, "repository": repo["id"], "top": 5, "committer": args.commit_author}),
-                "recent_commit_identities": commit_identities(client.call_tool("repo_search_commits", {"project": PROJECT, "repository": repo["id"], "top": 20})),
+                "branches": client.call_tool(
+                    "repo_list_branches_by_repo",
+                    {"repositoryId": repo["id"], "top": 5, "filterContains": args.branch_filter},
+                ),
+                "commits_author": client.call_tool(
+                    "repo_search_commits",
+                    {"project": PROJECT, "repository": repo["id"], "top": 5, "author": args.commit_author},
+                ),
+                "commits_committer": client.call_tool(
+                    "repo_search_commits",
+                    {"project": PROJECT, "repository": repo["id"], "top": 5, "committer": args.commit_author},
+                ),
+                "recent_commit_identities": commit_identities(
+                    client.call_tool("repo_search_commits", {"project": PROJECT, "repository": repo["id"], "top": 20})
+                ),
             }
             print(json.dumps(output, indent=2, ensure_ascii=False))
         if args.command == "inspect-identity":
-            print(json.dumps(client.call_tool("core_get_identity_ids", {"searchFilter": args.commit_author}), indent=2, ensure_ascii=False))
+            print(
+                json.dumps(
+                    client.call_tool("core_get_identity_ids", {"searchFilter": args.commit_author}),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
         if args.command == "inspect-workitems-wiql":
             identity = args.commit_author
             wiql = """
@@ -611,12 +670,23 @@ WHERE [System.TeamProject] = @project
   )
 ORDER BY [System.ChangedDate] DESC
 """.format(identity=identity.replace("'", "''"))
-            result = client.call_tool("wit_query_by_wiql", {"project": PROJECT, "wiql": wiql, "top": args.work_items_top})
+            result = client.call_tool(
+                "wit_query_by_wiql", {"project": PROJECT, "wiql": wiql, "top": args.work_items_top}
+            )
             items = result.get("workItems", result.get("results", [])) if isinstance(result, dict) else []
             print(json.dumps({"count": len(items), "sample": items[:5]}, indent=2, ensure_ascii=False))
         if args.command == "collect-azure":
-            azure_result = collect_azure(client, ROOT / "data" / "azure_devops_mcp_export.json", args.work_items_top, args.commit_author, args.branch_filter, args.wiql_file)
-            merged = merge_into_career_export(ROOT / "data" / "azure_devops_mcp_export.json", ROOT / "data" / "career_source_export.json")
+            azure_result = collect_azure(
+                client,
+                ROOT / "data" / "azure_devops_mcp_export.json",
+                args.work_items_top,
+                args.commit_author,
+                args.branch_filter,
+                args.wiql_file,
+            )
+            merged = merge_into_career_export(
+                ROOT / "data" / "azure_devops_mcp_export.json", ROOT / "data" / "career_source_export.json"
+            )
             print(json.dumps({"azure": azure_result, "career": merged}, indent=2))
     finally:
         client.close()

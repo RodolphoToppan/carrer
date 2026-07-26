@@ -2,98 +2,21 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
-from hashlib import sha256
+from collections import defaultdict
 from pathlib import Path
 
+# Compatibility layer: Import domain functions from new modular structure
+from carrer.domain.hashing import most_restrictive, stable_hash
+from carrer.domain.timestamps import now
 
-def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# Import graph storage from new storage module
+from carrer.storage.json_graph_storage import JsonGraphStorage
 
+# Re-export for backward compatibility
+# GraphStore is now an alias to JsonGraphStorage
+GraphStore = JsonGraphStorage
 
-def stable_hash(value: object) -> str:
-    data = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    return sha256(data.encode("utf-8")).hexdigest()
-
-
-def most_restrictive(levels: list[str]) -> str:
-    order = {"private": 0, "internal": 1, "artifact_safe": 2, "exported": 3}
-    return min(levels, key=lambda level: order[level])
-
-
-class GraphStore:
-    def __init__(self) -> None:
-        self.nodes: dict[str, dict] = {}
-        self.edges: list[dict] = []
-        self.audit_records: list[dict] = []
-
-    @classmethod
-    def load(cls, path: str | Path) -> "GraphStore":
-        store = cls()
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        store.nodes = data.get("nodes", {})
-        store.edges = data.get("edges", [])
-        store.audit_records = data.get("audit_records", [])
-        return store
-
-    def save(self, path: str | Path) -> None:
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(
-                {
-                    "nodes": self.nodes,
-                    "edges": self.edges,
-                    "audit_records": self.audit_records,
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            encoding="utf-8",
-        )
-
-    def create_node(self, node: dict) -> tuple[dict, bool]:
-        existing = self.nodes.get(node["id"])
-        if existing:
-            return existing, False
-        self.nodes[node["id"]] = node
-        return node, True
-
-    def update_node(self, node_id: str, properties: dict) -> None:
-        node = self.nodes[node_id]
-        if node["node_type"] == "EvidenceNode":
-            raise ValueError("EvidenceNode is immutable")
-        node["properties"].update(properties)
-
-    def create_edge(self, edge_type: str, from_node_id: str, to_node_id: str, **properties: object) -> None:
-        edge_id = f"edge:{stable_hash([edge_type, from_node_id, to_node_id, properties])}"
-        edge = {
-            "id": edge_id,
-            "edge_type": edge_type,
-            "from_node_id": from_node_id,
-            "to_node_id": to_node_id,
-            "created_at": now(),
-            "properties": properties,
-        }
-        if not any(existing["id"] == edge_id for existing in self.edges):
-            self.edges.append(edge)
-
-    def nodes_by_type(self, node_type: str) -> list[dict]:
-        return [node for node in self.nodes.values() if node["node_type"] == node_type]
-
-    def append_audit_record(self, audit_type: str, target_refs: list[str], result: str, metadata: dict | None = None) -> None:
-        self.audit_records.append(
-            {
-                "id": f"audit:{stable_hash([audit_type, target_refs, result, metadata, now()])}",
-                "audit_type": audit_type,
-                "created_at": now(),
-                "actor": "system",
-                "target_refs": target_refs,
-                "result": result,
-                "metadata": metadata or {},
-            }
-        )
+__all__ = ["now", "stable_hash", "most_restrictive", "GraphStore"]
 
 
 def node(node_id: str, node_type: str, **properties: object) -> dict:
@@ -129,19 +52,16 @@ TECHNOLOGY_KEYWORDS = {
     "python": "Python",
     "javascript": "JavaScript",
     "typescript": "TypeScript",
-
     # Frameworks
     "spring": "Spring Boot",
     "spring boot": "Spring Boot",
     "spring framework": "Spring Boot",
-
     # Message Queuing
     "rabbitmq": "RabbitMQ",
     "active mq": "ActiveMQ Artemis",
     "activemq": "ActiveMQ Artemis",
     "artemis": "ActiveMQ Artemis",
     "kafka": "Apache Kafka",
-
     # Caching & Databases
     "redis": "Redis",
     "oracle": "Oracle Database",
@@ -150,7 +70,6 @@ TECHNOLOGY_KEYWORDS = {
     "sql": "SQL",
     "mysql": "MySQL",
     "mongodb": "MongoDB",
-
     # API & Integration
     "rest": "REST APIs",
     "rest api": "REST APIs",
@@ -159,12 +78,10 @@ TECHNOLOGY_KEYWORDS = {
     "grpc": "gRPC",
     "api": "API Development",
     "webhook": "Webhooks",
-
     # Containerization & Orchestration
     "docker": "Docker",
     "kubernetes": "Kubernetes",
     "k8s": "Kubernetes",
-
     # Marketplace Integration
     "marketplace": "Marketplace Integration",
     "mercado livre": "Mercado Livre Integration",
@@ -177,7 +94,6 @@ TECHNOLOGY_KEYWORDS = {
     "madeira madeira": "MadeiraMadeira Integration",
     "dafiti": "Dafiti Integration",
     "tiktok shop": "TikTok Shop Integration",
-
     # Observability & Monitoring
     "prometheus": "Prometheus",
     "grafana": "Grafana",
@@ -186,7 +102,6 @@ TECHNOLOGY_KEYWORDS = {
     "kibana": "Kibana",
     "elastic": "Elasticsearch",
     "elasticsearch": "Elasticsearch",
-
     # Testing
     "junit": "JUnit",
     "mockito": "Mockito",
@@ -218,7 +133,6 @@ DOMAIN_ENRICHMENT = {
     "merge request delivery": "Code Review & Pull Request Management",
     "code review": "Code Review & Quality Assurance",
     "work item delivery": "Product Development & Delivery",
-
     # Product/Business patterns (case-insensitive matching will be done)
     "produto conciliacao": "Financial Reconciliation Systems",
     "produto expansao": "Business Expansion & Growth Systems",
@@ -231,7 +145,6 @@ DOMAIN_ENRICHMENT = {
     "integracao": "System Integration & Connectivity",
     "integração": "System Integration & Connectivity",
     "integration": "System Integration & Connectivity",
-
     # E-commerce & Marketplace patterns
     "marketplace integrations": "E-commerce Marketplace Integration",
     "marketplace integration": "E-commerce Marketplace Integration",
@@ -245,7 +158,6 @@ DOMAIN_ENRICHMENT = {
     "shipping": "Shipping & Logistics Management",
     "estoque": "Inventory Management",
     "inventory": "Inventory Management",
-
     # Technical/Architecture patterns
     "asynchronous processing": "Asynchronous Processing & Message Queuing",
     "distributed processing": "Distributed Systems & Processing",
@@ -261,7 +173,6 @@ DOMAIN_ENRICHMENT = {
     "optimization": "System Performance & Optimization",
     "refactoring": "Code Refactoring & Modernization",
     "legacy": "Legacy System Modernization",
-
     # Business Process patterns
     "importacao": "Data Import & ETL Operations",
     "export": "Data Export & Integration",
@@ -317,43 +228,43 @@ def extract_context_signals(evidence: list[dict]) -> dict:
 
     # Patterns to detect
     scale_patterns = [
-        r'(\d+)\s*(million|thousand|milhão|mil)',
-        r'(\d+)\s*(orders|pedidos|requests|requisições)',
-        r'high\s+volume',
-        r'large\s+scale',
-        r'performance',
-        r'optimization',
-        r'optimização',
+        r"(\d+)\s*(million|thousand|milhão|mil)",
+        r"(\d+)\s*(orders|pedidos|requests|requisições)",
+        r"high\s+volume",
+        r"large\s+scale",
+        r"performance",
+        r"optimization",
+        r"optimização",
     ]
 
     action_patterns = [
-        r'\b(implement|refactor|optimize|create|develop|fix|improve|migrate|build|design|enhance)\b',
-        r'\b(implementar|refatorar|otimizar|criar|desenvolver|corrigir|melhorar|migrar|construir)\b',
+        r"\b(implement|refactor|optimize|create|develop|fix|improve|migrate|build|design|enhance)\b",
+        r"\b(implementar|refatorar|otimizar|criar|desenvolver|corrigir|melhorar|migrar|construir)\b",
     ]
 
     business_patterns = [
-        r'\b(API|api|endpoint|REST|rest)\b',
-        r'\b(integration|integração|integracao)\b',
-        r'\b(marketplace|market|mercado)\b',
-        r'\b(ERP|erp)\b',
-        r'\b(seller|vendor|cliente|customer)\b',
-        r'\b(order|pedido|pedidos|request|requisição)\b',
-        r'\b(conciliação|conciliacao|reconciliation)\b',
-        r'\b(vendas|sales|revenue)\b',
+        r"\b(API|api|endpoint|REST|rest)\b",
+        r"\b(integration|integração|integracao)\b",
+        r"\b(marketplace|market|mercado)\b",
+        r"\b(ERP|erp)\b",
+        r"\b(seller|vendor|cliente|customer)\b",
+        r"\b(order|pedido|pedidos|request|requisição)\b",
+        r"\b(conciliação|conciliacao|reconciliation)\b",
+        r"\b(vendas|sales|revenue)\b",
     ]
 
     # Marketplace names
     marketplace_patterns = [
-        r'\b(mercado livre|mercadolivre|meli)\b',
-        r'\b(amazon|aws)\b',
-        r'\b(shopee)\b',
-        r'\b(magalu|magazine luiza)\b',
-        r'\b(americanas|b2w)\b',
-        r'\b(madeira madeira|madeiramadeira)\b',
-        r'\b(via varejo|casas bahia)\b',
-        r'\b(dafiti)\b',
-        r'\b(tiktok shop|tiktok)\b',
-        r'\b(netshoes)\b',
+        r"\b(mercado livre|mercadolivre|meli)\b",
+        r"\b(amazon|aws)\b",
+        r"\b(shopee)\b",
+        r"\b(magalu|magazine luiza)\b",
+        r"\b(americanas|b2w)\b",
+        r"\b(madeira madeira|madeiramadeira)\b",
+        r"\b(via varejo|casas bahia)\b",
+        r"\b(dafiti)\b",
+        r"\b(tiktok shop|tiktok)\b",
+        r"\b(netshoes)\b",
     ]
 
     for item in evidence:
@@ -403,25 +314,25 @@ def extract_context_signals(evidence: list[dict]) -> dict:
                 for match in matches:
                     # Normalize marketplace name
                     match_lower = match.lower()
-                    if 'mercado' in match_lower or 'meli' in match_lower:
+                    if "mercado" in match_lower or "meli" in match_lower:
                         signals["marketplaces_seen"].add("Mercado Livre")
-                    elif 'amazon' in match_lower:
+                    elif "amazon" in match_lower:
                         signals["marketplaces_seen"].add("Amazon")
-                    elif 'shopee' in match_lower:
+                    elif "shopee" in match_lower:
                         signals["marketplaces_seen"].add("Shopee")
-                    elif 'magalu' in match_lower or 'magazine' in match_lower:
+                    elif "magalu" in match_lower or "magazine" in match_lower:
                         signals["marketplaces_seen"].add("Magalu")
-                    elif 'americanas' in match_lower or 'b2w' in match_lower:
+                    elif "americanas" in match_lower or "b2w" in match_lower:
                         signals["marketplaces_seen"].add("Americanas")
-                    elif 'madeira' in match_lower:
+                    elif "madeira" in match_lower:
                         signals["marketplaces_seen"].add("MadeiraMadeira")
-                    elif 'via' in match_lower or 'casas' in match_lower:
+                    elif "via" in match_lower or "casas" in match_lower:
                         signals["marketplaces_seen"].add("Via Varejo")
-                    elif 'dafiti' in match_lower:
+                    elif "dafiti" in match_lower:
                         signals["marketplaces_seen"].add("Dafiti")
-                    elif 'tiktok' in match_lower:
+                    elif "tiktok" in match_lower:
                         signals["marketplaces_seen"].add("TikTok Shop")
-                    elif 'netshoes' in match_lower:
+                    elif "netshoes" in match_lower:
                         signals["marketplaces_seen"].add("Netshoes")
 
         # Check specific business areas
@@ -443,19 +354,40 @@ def extract_context_signals(evidence: list[dict]) -> dict:
             signals["impact_signals"]["customer_focused"] += 1
 
         # Quality focus
-        if any(term in combined_text for term in ["qualidade", "quality", "erro", "error", "bug", "falha", "failure", "test", "teste"]):
+        if any(
+            term in combined_text
+            for term in ["qualidade", "quality", "erro", "error", "bug", "falha", "failure", "test", "teste"]
+        ):
             signals["impact_signals"]["quality_focused"] += 1
 
         # Performance focus
-        if any(term in combined_text for term in ["performance", "desempenho", "otimização", "optimization", "rápido", "fast", "eficiência", "efficiency"]):
+        if any(
+            term in combined_text
+            for term in [
+                "performance",
+                "desempenho",
+                "otimização",
+                "optimization",
+                "rápido",
+                "fast",
+                "eficiência",
+                "efficiency",
+            ]
+        ):
             signals["impact_signals"]["performance_focused"] += 1
 
         # Integration achievements
-        if any(term in combined_text for term in ["integrar", "integrate", "integração", "integration", "conectar", "connect"]):
+        if any(
+            term in combined_text
+            for term in ["integrar", "integrate", "integração", "integration", "conectar", "connect"]
+        ):
             signals["impact_signals"]["integration_achievements"] += 1
 
         # Implementation achievements
-        if any(term in combined_text for term in ["implementar", "implement", "criar", "create", "desenvolver", "develop", "construir", "build"]):
+        if any(
+            term in combined_text
+            for term in ["implementar", "implement", "criar", "create", "desenvolver", "develop", "construir", "build"]
+        ):
             signals["impact_signals"]["implementation_achievements"] += 1
 
     # Clean up duplicates
@@ -468,7 +400,9 @@ def extract_context_signals(evidence: list[dict]) -> dict:
     return signals
 
 
-def enrich_knowledge_statement(knowledge_type: str, base_statement: str, evidence: list[dict], store: GraphStore) -> str:
+def enrich_knowledge_statement(
+    knowledge_type: str, base_statement: str, evidence: list[dict], store: GraphStore
+) -> str:
     """Enrich knowledge statement with context from evidence"""
 
     # For technology experience, add evidence count context
@@ -549,8 +483,6 @@ def enrich_knowledge_statement(knowledge_type: str, base_statement: str, evidenc
 
     # Default: return base statement
     return base_statement
-
-
 
 
 def validate_source_export_v1(export: dict) -> None:
@@ -634,27 +566,27 @@ def infer_business_domain_from_payload(payload: dict) -> str | None:
     # Business domain patterns with priority (specific → general)
     domain_patterns = [
         # E-commerce & Marketplace (highest priority for business context)
-        (r'\b(pedidos?|orders?)\b', 'Order Management & Processing'),
-        (r'\b(vendas?|sales?|revenue)\b', 'Sales & Revenue Operations'),
-        (r'\b(concilia[çc][aã]o|reconciliation|settlement)\b', 'Financial Reconciliation & Settlement'),
-        (r'\b(baixas?|settlement)\b', 'Financial Settlement Operations'),
-        (r'\b(frete|shipping|log[ií]stica|logistics)\b', 'Shipping & Logistics Management'),
-        (r'\b(estoque|inventory|stock)\b', 'Inventory Management'),
-        (r'\b(importa[çc][aã]o|import|etl)\b', 'Data Import & ETL Operations'),
-        (r'\b(expans[aã]o|expansion|growth)\b', 'Business Expansion & Growth'),
-        (r'\b(integra[çc][aã]o|integration)\b', 'System Integration & Connectivity'),
-        (r'\b(webhook|callback|event)\b', 'Event-Driven Architecture'),
-        (r'\b(api|endpoint|rest)\b', 'API Design & Development'),
-        (r'\b(migra[çc][aã]o|migration)\b', 'Data Migration & System Transfer'),
-        (r'\b(onboarding|setup|configura[çc][aã]o)\b', 'Integration Onboarding & Setup'),
-        (r'\b(monitoramento|monitoring|observability)\b', 'System Observability & Monitoring'),
-        (r'\b(relat[óo]rio|report|dashboard)\b', 'Reporting & Analytics'),
+        (r"\b(pedidos?|orders?)\b", "Order Management & Processing"),
+        (r"\b(vendas?|sales?|revenue)\b", "Sales & Revenue Operations"),
+        (r"\b(concilia[çc][aã]o|reconciliation|settlement)\b", "Financial Reconciliation & Settlement"),
+        (r"\b(baixas?|settlement)\b", "Financial Settlement Operations"),
+        (r"\b(frete|shipping|log[ií]stica|logistics)\b", "Shipping & Logistics Management"),
+        (r"\b(estoque|inventory|stock)\b", "Inventory Management"),
+        (r"\b(importa[çc][aã]o|import|etl)\b", "Data Import & ETL Operations"),
+        (r"\b(expans[aã]o|expansion|growth)\b", "Business Expansion & Growth"),
+        (r"\b(integra[çc][aã]o|integration)\b", "System Integration & Connectivity"),
+        (r"\b(webhook|callback|event)\b", "Event-Driven Architecture"),
+        (r"\b(api|endpoint|rest)\b", "API Design & Development"),
+        (r"\b(migra[çc][aã]o|migration)\b", "Data Migration & System Transfer"),
+        (r"\b(onboarding|setup|configura[çc][aã]o)\b", "Integration Onboarding & Setup"),
+        (r"\b(monitoramento|monitoring|observability)\b", "System Observability & Monitoring"),
+        (r"\b(relat[óo]rio|report|dashboard)\b", "Reporting & Analytics"),
     ]
 
     # Extract text from title and description
-    title = payload.get('title', '').lower()
-    description = payload.get('description', '').lower()
-    combined_text = title + ' ' + description
+    title = payload.get("title", "").lower()
+    description = payload.get("description", "").lower()
+    combined_text = title + " " + description
 
     # Try to match business domain patterns (first match wins due to priority order)
     for pattern, domain in domain_patterns:
@@ -734,11 +666,22 @@ def ingest_fixture(fixture: dict, store: GraphStore) -> dict[str, int]:
     for record in fixture["records"]:
         source = record.get("source", fixture["source"])
         store.create_node(node(f"source:{source['id']}", "Source", **source))
-        store.create_node(node(f"identity:{engineer['id']}:{source['id']}", "SourceIdentity", engineer_id=engineer["id"], source_id=source["id"]))
-        store.create_edge("ENGINEER_HAS_IDENTITY", f"engineer:{engineer['id']}", f"identity:{engineer['id']}:{source['id']}")
+        store.create_node(
+            node(
+                f"identity:{engineer['id']}:{source['id']}",
+                "SourceIdentity",
+                engineer_id=engineer["id"],
+                source_id=source["id"],
+            )
+        )
+        store.create_edge(
+            "ENGINEER_HAS_IDENTITY", f"engineer:{engineer['id']}", f"identity:{engineer['id']}:{source['id']}"
+        )
         payload_hash = stable_hash(record["payload"])
         evidence_type = evidence_type_for(record["type"], record["payload"])
-        evidence_id = "evidence:" + stable_hash([source["id"], record["type"], record["external_id"], evidence_type, payload_hash])
+        evidence_id = "evidence:" + stable_hash(
+            [source["id"], record["type"], record["external_id"], evidence_type, payload_hash]
+        )
         evidence_by_external_id[record["external_id"]] = evidence_id
         evidence = node(
             evidence_id,
@@ -763,7 +706,9 @@ def ingest_fixture(fixture: dict, store: GraphStore) -> dict[str, int]:
         for relation in record["payload"].get("relationships", []):
             to_id = evidence_by_external_id.get(relation.get("external_id"))
             if to_id:
-                store.create_edge("EVIDENCE_RELATED_TO_EVIDENCE", from_id, to_id, source_relation_type=relation.get("type", ""))
+                store.create_edge(
+                    "EVIDENCE_RELATED_TO_EVIDENCE", from_id, to_id, source_relation_type=relation.get("type", "")
+                )
 
     source_refs = sorted({f"source:{record.get('source', fixture['source'])['id']}" for record in fixture["records"]})
     store.append_audit_record("ingestion_run", source_refs, "succeeded", {"created": created, "reused": reused})
@@ -803,44 +748,44 @@ def infer_impact_patterns(store: GraphStore, evidence: list[dict]) -> list[dict]
 
     # Scale/volume patterns
     scale_patterns = [
-        r'(\d+)\s*(million|thousand|milhão|mil|bilhão|billion)',
-        r'(\d+)\s*(orders?|pedidos?|requests?|requisições?)',
-        r'(\d+[.,]\d+)\s*m\b',  # 36m, 30m, etc
-        r'\bhigh\s+volume\b',
-        r'\blarge\s+scale\b',
+        r"(\d+)\s*(million|thousand|milhão|mil|bilhão|billion)",
+        r"(\d+)\s*(orders?|pedidos?|requests?|requisições?)",
+        r"(\d+[.,]\d+)\s*m\b",  # 36m, 30m, etc
+        r"\bhigh\s+volume\b",
+        r"\blarge\s+scale\b",
     ]
 
     # Performance patterns
     performance_patterns = [
-        r'\b(performance|desempenho)\b',
-        r'\b(optimi[zs]ation|otimi[zs]ação)\b',
-        r'\b(efficien[ct]y|eficiência)\b',
-        r'\b(faster|mais\s+rápido|quick|ágil)\b',
-        r'\b(improved|melhorado|enhanced|aprimorado)\b',
+        r"\b(performance|desempenho)\b",
+        r"\b(optimi[zs]ation|otimi[zs]ação)\b",
+        r"\b(efficien[ct]y|eficiência)\b",
+        r"\b(faster|mais\s+rápido|quick|ágil)\b",
+        r"\b(improved|melhorado|enhanced|aprimorado)\b",
     ]
 
     # Integration patterns
     integration_patterns = [
-        r'\b(integration|integração|integracao)\b',
-        r'\b(marketplace|market)\b',
-        r'\b(API|endpoint|REST)\b',
-        r'\b(connect|conectar|webhook)\b',
+        r"\b(integration|integração|integracao)\b",
+        r"\b(marketplace|market)\b",
+        r"\b(API|endpoint|REST)\b",
+        r"\b(connect|conectar|webhook)\b",
     ]
 
     # Customer focus patterns
     customer_patterns = [
-        r'\b(customer|cliente|client|user|usuário)\b',
-        r'\b(satisf[aã]ção|satisfaction)\b',
-        r'\b(experience|experiência)\b',
+        r"\b(customer|cliente|client|user|usuário)\b",
+        r"\b(satisf[aã]ção|satisfaction)\b",
+        r"\b(experience|experiência)\b",
     ]
 
     # Quality patterns
     quality_patterns = [
-        r'\b(quality|qualidade)\b',
-        r'\b(error|erro|bug|falha|failure)\b',
-        r'\b(test|teste|testing)\b',
-        r'\b(fix|corrigir|resolver|solve)\b',
-        r'\b(reliability|confiabilidade|stability|estabilidade)\b',
+        r"\b(quality|qualidade)\b",
+        r"\b(error|erro|bug|falha|failure)\b",
+        r"\b(test|teste|testing)\b",
+        r"\b(fix|corrigir|resolver|solve)\b",
+        r"\b(reliability|confiabilidade|stability|estabilidade)\b",
     ]
 
     for item in evidence:
@@ -890,54 +835,64 @@ def infer_impact_patterns(store: GraphStore, evidence: list[dict]) -> list[dict]
     impact_threshold = 5
 
     if len(scale_evidence) >= impact_threshold:
-        observations.append(create_observation(
-            store,
-            "IMPACT_SIGNAL_PATTERN",
-            f"Evidence demonstrates work at scale with {len(scale_evidence)} volume/scale indicators.",
-            scale_evidence[:10],  # Limit to 10 most relevant
-            impact_category="scale",
-            signal_strength="high" if len(scale_evidence) >= 20 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "IMPACT_SIGNAL_PATTERN",
+                f"Evidence demonstrates work at scale with {len(scale_evidence)} volume/scale indicators.",
+                scale_evidence[:10],  # Limit to 10 most relevant
+                impact_category="scale",
+                signal_strength="high" if len(scale_evidence) >= 20 else "medium",
+            )
+        )
 
     if len(performance_evidence) >= impact_threshold:
-        observations.append(create_observation(
-            store,
-            "IMPACT_SIGNAL_PATTERN",
-            f"Evidence shows performance optimization focus with {len(performance_evidence)} performance-related activities.",
-            performance_evidence[:10],
-            impact_category="performance",
-            signal_strength="high" if len(performance_evidence) >= 20 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "IMPACT_SIGNAL_PATTERN",
+                f"Evidence shows performance optimization focus with {len(performance_evidence)} performance-related activities.",
+                performance_evidence[:10],
+                impact_category="performance",
+                signal_strength="high" if len(performance_evidence) >= 20 else "medium",
+            )
+        )
 
     if len(integration_evidence) >= impact_threshold:
-        observations.append(create_observation(
-            store,
-            "IMPACT_SIGNAL_PATTERN",
-            f"Evidence demonstrates integration expertise with {len(integration_evidence)} integration activities.",
-            integration_evidence[:10],
-            impact_category="integration",
-            signal_strength="high" if len(integration_evidence) >= 30 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "IMPACT_SIGNAL_PATTERN",
+                f"Evidence demonstrates integration expertise with {len(integration_evidence)} integration activities.",
+                integration_evidence[:10],
+                impact_category="integration",
+                signal_strength="high" if len(integration_evidence) >= 30 else "medium",
+            )
+        )
 
     if len(customer_evidence) >= impact_threshold:
-        observations.append(create_observation(
-            store,
-            "IMPACT_SIGNAL_PATTERN",
-            f"Evidence shows customer-focused work with {len(customer_evidence)} customer-related activities.",
-            customer_evidence[:10],
-            impact_category="customer_focus",
-            signal_strength="high" if len(customer_evidence) >= 30 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "IMPACT_SIGNAL_PATTERN",
+                f"Evidence shows customer-focused work with {len(customer_evidence)} customer-related activities.",
+                customer_evidence[:10],
+                impact_category="customer_focus",
+                signal_strength="high" if len(customer_evidence) >= 30 else "medium",
+            )
+        )
 
     if len(quality_evidence) >= impact_threshold:
-        observations.append(create_observation(
-            store,
-            "IMPACT_SIGNAL_PATTERN",
-            f"Evidence demonstrates quality focus with {len(quality_evidence)} quality/testing activities.",
-            quality_evidence[:10],
-            impact_category="quality",
-            signal_strength="high" if len(quality_evidence) >= 30 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "IMPACT_SIGNAL_PATTERN",
+                f"Evidence demonstrates quality focus with {len(quality_evidence)} quality/testing activities.",
+                quality_evidence[:10],
+                impact_category="quality",
+                signal_strength="high" if len(quality_evidence) >= 30 else "medium",
+            )
+        )
 
     return observations
 
@@ -958,72 +913,72 @@ def infer_architecture_patterns(store: GraphStore, evidence: list[dict]) -> list
 
     # REST/API patterns
     rest_patterns = [
-        r'\brest\b',
-        r'\brestful\b',
-        r'\bapi\b',
-        r'\bendpoint\b',
-        r'\bhttp\b',
-        r'\bjson\b',
-        r'\bweb\s+api\b',
+        r"\brest\b",
+        r"\brestful\b",
+        r"\bapi\b",
+        r"\bendpoint\b",
+        r"\bhttp\b",
+        r"\bjson\b",
+        r"\bweb\s+api\b",
     ]
 
     # Event-driven patterns
     event_patterns = [
-        r'\bevent[os]?\b',
-        r'\bmessag(e|ing|em)\b',
-        r'\bqueue\b',
-        r'\bfila\b',
-        r'\basync\b',
-        r'\bass[íi]ncrono\b',
-        r'\bpublic(ar|ação)\b',
-        r'\bpublish\b',
-        r'\bsubscri(be|ção)\b',
-        r'\bconsumer\b',
-        r'\bconsumidor\b',
-        r'\bproducer\b',
-        r'\bprodutor\b',
-        r'\bcallback\b',
-        r'\bwebhook\b',
+        r"\bevent[os]?\b",
+        r"\bmessag(e|ing|em)\b",
+        r"\bqueue\b",
+        r"\bfila\b",
+        r"\basync\b",
+        r"\bass[íi]ncrono\b",
+        r"\bpublic(ar|ação)\b",
+        r"\bpublish\b",
+        r"\bsubscri(be|ção)\b",
+        r"\bconsumer\b",
+        r"\bconsumidor\b",
+        r"\bproducer\b",
+        r"\bprodutor\b",
+        r"\bcallback\b",
+        r"\bwebhook\b",
     ]
 
     # Message queue patterns
     mq_patterns = [
-        r'\brabbitmq\b',
-        r'\bactivemq\b',
-        r'\bartemis\b',
-        r'\bkafka\b',
-        r'\bsqs\b',
-        r'\bmessage\s+broker\b',
+        r"\brabbitmq\b",
+        r"\bactivemq\b",
+        r"\bartemis\b",
+        r"\bkafka\b",
+        r"\bsqs\b",
+        r"\bmessage\s+broker\b",
     ]
 
     # Distributed systems patterns
     distributed_patterns = [
-        r'\bdistribui[dç][ao]\b',
-        r'\bdistributed\b',
-        r'\bscal(e|ability|ar)\b',
-        r'\bescal(a|abilidade)\b',
-        r'\bload\s+balanc\b',
-        r'\bbalancea(dor|mento)\b',
-        r'\bcluster\b',
-        r'\breplica(tion|ção)\b',
+        r"\bdistribui[dç][ao]\b",
+        r"\bdistributed\b",
+        r"\bscal(e|ability|ar)\b",
+        r"\bescal(a|abilidade)\b",
+        r"\bload\s+balanc\b",
+        r"\bbalancea(dor|mento)\b",
+        r"\bcluster\b",
+        r"\breplica(tion|ção)\b",
     ]
 
     # Caching patterns
     cache_patterns = [
-        r'\bcache\b',
-        r'\bredis\b',
-        r'\bmemcache\b',
-        r'\bin-memory\b',
-        r'\bem\s+mem[óo]ria\b',
+        r"\bcache\b",
+        r"\bredis\b",
+        r"\bmemcache\b",
+        r"\bin-memory\b",
+        r"\bem\s+mem[óo]ria\b",
     ]
 
     # Microservices patterns
     microservices_patterns = [
-        r'\bmicroservi[cç][eo]s?\b',
-        r'\bservi[cç]o\b',
-        r'\bservice\b',
-        r'\bapi\s+gateway\b',
-        r'\bservice\s+mesh\b',
+        r"\bmicroservi[cç][eo]s?\b",
+        r"\bservi[cç]o\b",
+        r"\bservice\b",
+        r"\bapi\s+gateway\b",
+        r"\bservice\s+mesh\b",
     ]
 
     for item in evidence:
@@ -1079,69 +1034,81 @@ def infer_architecture_patterns(store: GraphStore, evidence: list[dict]) -> list
 
     # REST API is common, so require higher threshold (15+)
     if len(rest_api_evidence) >= 15:
-        observations.append(create_observation(
-            store,
-            "ARCHITECTURE_PATTERN",
-            f"Evidence demonstrates REST API design experience with {len(rest_api_evidence)} API-related activities.",
-            rest_api_evidence[:15],  # Limit to 15 most relevant
-            architecture_category="rest_api",
-            pattern_strength="high" if len(rest_api_evidence) >= 50 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "ARCHITECTURE_PATTERN",
+                f"Evidence demonstrates REST API design experience with {len(rest_api_evidence)} API-related activities.",
+                rest_api_evidence[:15],  # Limit to 15 most relevant
+                architecture_category="rest_api",
+                pattern_strength="high" if len(rest_api_evidence) >= 50 else "medium",
+            )
+        )
 
     # Event-driven requires lower threshold (5+)
     if len(event_driven_evidence) >= 5:
-        observations.append(create_observation(
-            store,
-            "ARCHITECTURE_PATTERN",
-            f"Evidence shows event-driven architecture experience with {len(event_driven_evidence)} event-related activities.",
-            event_driven_evidence[:10],
-            architecture_category="event_driven",
-            pattern_strength="high" if len(event_driven_evidence) >= 15 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "ARCHITECTURE_PATTERN",
+                f"Evidence shows event-driven architecture experience with {len(event_driven_evidence)} event-related activities.",
+                event_driven_evidence[:10],
+                architecture_category="event_driven",
+                pattern_strength="high" if len(event_driven_evidence) >= 15 else "medium",
+            )
+        )
 
     # Message queue requires low threshold (3+)
     if len(message_queue_evidence) >= 3:
-        observations.append(create_observation(
-            store,
-            "ARCHITECTURE_PATTERN",
-            f"Evidence demonstrates message queue expertise with {len(message_queue_evidence)} messaging activities.",
-            message_queue_evidence[:10],
-            architecture_category="message_queue",
-            pattern_strength="high" if len(message_queue_evidence) >= 10 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "ARCHITECTURE_PATTERN",
+                f"Evidence demonstrates message queue expertise with {len(message_queue_evidence)} messaging activities.",
+                message_queue_evidence[:10],
+                architecture_category="message_queue",
+                pattern_strength="high" if len(message_queue_evidence) >= 10 else "medium",
+            )
+        )
 
     # Distributed systems (5+)
     if len(distributed_evidence) >= 5:
-        observations.append(create_observation(
-            store,
-            "ARCHITECTURE_PATTERN",
-            f"Evidence shows distributed systems experience with {len(distributed_evidence)} distribution-related activities.",
-            distributed_evidence[:10],
-            architecture_category="distributed_systems",
-            pattern_strength="high" if len(distributed_evidence) >= 15 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "ARCHITECTURE_PATTERN",
+                f"Evidence shows distributed systems experience with {len(distributed_evidence)} distribution-related activities.",
+                distributed_evidence[:10],
+                architecture_category="distributed_systems",
+                pattern_strength="high" if len(distributed_evidence) >= 15 else "medium",
+            )
+        )
 
     # Caching (3+)
     if len(caching_evidence) >= 3:
-        observations.append(create_observation(
-            store,
-            "ARCHITECTURE_PATTERN",
-            f"Evidence demonstrates caching strategy implementation with {len(caching_evidence)} cache-related activities.",
-            caching_evidence[:10],
-            architecture_category="caching",
-            pattern_strength="high" if len(caching_evidence) >= 10 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "ARCHITECTURE_PATTERN",
+                f"Evidence demonstrates caching strategy implementation with {len(caching_evidence)} cache-related activities.",
+                caching_evidence[:10],
+                architecture_category="caching",
+                pattern_strength="high" if len(caching_evidence) >= 10 else "medium",
+            )
+        )
 
     # Microservices (5+)
     if len(microservices_evidence) >= 5:
-        observations.append(create_observation(
-            store,
-            "ARCHITECTURE_PATTERN",
-            f"Evidence shows microservices architecture experience with {len(microservices_evidence)} service-oriented activities.",
-            microservices_evidence[:10],
-            architecture_category="microservices",
-            pattern_strength="high" if len(microservices_evidence) >= 15 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "ARCHITECTURE_PATTERN",
+                f"Evidence shows microservices architecture experience with {len(microservices_evidence)} service-oriented activities.",
+                microservices_evidence[:10],
+                architecture_category="microservices",
+                pattern_strength="high" if len(microservices_evidence) >= 15 else "medium",
+            )
+        )
 
     return observations
 
@@ -1161,60 +1128,60 @@ def infer_business_value_patterns(store: GraphStore, evidence: list[dict]) -> li
 
     # Customer/User value patterns
     customer_patterns = [
-        r'\bcliente\b',
-        r'\bcustomer\b',
-        r'\busu[áa]rio\b',
-        r'\buser\b',
-        r'\bsatisfa[çc][ãa]o\b',
-        r'\bsatisfaction\b',
-        r'\bexperiência\b',
-        r'\bexperience\b',
+        r"\bcliente\b",
+        r"\bcustomer\b",
+        r"\busu[áa]rio\b",
+        r"\buser\b",
+        r"\bsatisfa[çc][ãa]o\b",
+        r"\bsatisfaction\b",
+        r"\bexperiência\b",
+        r"\bexperience\b",
     ]
 
     # Error/Quality improvement patterns
     error_patterns = [
-        r'\berro\b',
-        r'\berror\b',
-        r'\bbug\b',
-        r'\bfalha\b',
-        r'\bfailure\b',
-        r'\bcorri[çg]([ãi]o|ir)\b',
-        r'\bfix\b',
-        r'\bresol(ver|ução)\b',
-        r'\bsolve\b',
+        r"\berro\b",
+        r"\berror\b",
+        r"\bbug\b",
+        r"\bfalha\b",
+        r"\bfailure\b",
+        r"\bcorri[çg]([ãi]o|ir)\b",
+        r"\bfix\b",
+        r"\bresol(ver|ução)\b",
+        r"\bsolve\b",
     ]
 
     # Time/Efficiency patterns
     time_patterns = [
-        r'\btempo\b',
-        r'\btime\b',
-        r'\bprazo\b',
-        r'\bdeadline\b',
-        r'\br[áa]pido\b',
-        r'\bfast(er)?\b',
-        r'\bagilidade\b',
-        r'\bagility\b',
-        r'\bquick\b',
+        r"\btempo\b",
+        r"\btime\b",
+        r"\bprazo\b",
+        r"\bdeadline\b",
+        r"\br[áa]pido\b",
+        r"\bfast(er)?\b",
+        r"\bagilidade\b",
+        r"\bagility\b",
+        r"\bquick\b",
     ]
 
     # Cost reduction patterns
     cost_patterns = [
-        r'\bcusto\b',
-        r'\bcost\b',
-        r'\beconomia\b',
-        r'\bsavings?\b',
-        r'\bredu[çc][ãa]o\b',
-        r'\breduction\b',
+        r"\bcusto\b",
+        r"\bcost\b",
+        r"\beconomia\b",
+        r"\bsavings?\b",
+        r"\bredu[çc][ãa]o\b",
+        r"\breduction\b",
     ]
 
     # Automation patterns
     automation_patterns = [
-        r'\bautoma[çc][ãa]o\b',
-        r'\bautomation\b',
-        r'\bautomatizar\b',
-        r'\bautomate\b',
-        r'\bautom[áa]tico\b',
-        r'\bautomatic\b',
+        r"\bautoma[çc][ãa]o\b",
+        r"\bautomation\b",
+        r"\bautomatizar\b",
+        r"\bautomate\b",
+        r"\bautom[áa]tico\b",
+        r"\bautomatic\b",
     ]
 
     for item in evidence:
@@ -1264,58 +1231,68 @@ def infer_business_value_patterns(store: GraphStore, evidence: list[dict]) -> li
 
     # Customer value is very common, require higher threshold (20+)
     if len(customer_value_evidence) >= 20:
-        observations.append(create_observation(
-            store,
-            "BUSINESS_VALUE_PATTERN",
-            f"Evidence demonstrates customer-centric focus with {len(customer_value_evidence)} customer-focused activities.",
-            customer_value_evidence[:15],  # Limit to 15 most relevant
-            value_category="customer_focus",
-            value_strength="high" if len(customer_value_evidence) >= 50 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "BUSINESS_VALUE_PATTERN",
+                f"Evidence demonstrates customer-centric focus with {len(customer_value_evidence)} customer-focused activities.",
+                customer_value_evidence[:15],  # Limit to 15 most relevant
+                value_category="customer_focus",
+                value_strength="high" if len(customer_value_evidence) >= 50 else "medium",
+            )
+        )
 
     # Error reduction (10+)
     if len(error_reduction_evidence) >= 10:
-        observations.append(create_observation(
-            store,
-            "BUSINESS_VALUE_PATTERN",
-            f"Evidence shows quality improvement focus with {len(error_reduction_evidence)} bug fix and error resolution activities.",
-            error_reduction_evidence[:15],
-            value_category="error_reduction",
-            value_strength="high" if len(error_reduction_evidence) >= 30 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "BUSINESS_VALUE_PATTERN",
+                f"Evidence shows quality improvement focus with {len(error_reduction_evidence)} bug fix and error resolution activities.",
+                error_reduction_evidence[:15],
+                value_category="error_reduction",
+                value_strength="high" if len(error_reduction_evidence) >= 30 else "medium",
+            )
+        )
 
     # Time efficiency (10+)
     if len(time_efficiency_evidence) >= 10:
-        observations.append(create_observation(
-            store,
-            "BUSINESS_VALUE_PATTERN",
-            f"Evidence demonstrates time efficiency focus with {len(time_efficiency_evidence)} time-optimization activities.",
-            time_efficiency_evidence[:15],
-            value_category="time_efficiency",
-            value_strength="high" if len(time_efficiency_evidence) >= 30 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "BUSINESS_VALUE_PATTERN",
+                f"Evidence demonstrates time efficiency focus with {len(time_efficiency_evidence)} time-optimization activities.",
+                time_efficiency_evidence[:15],
+                value_category="time_efficiency",
+                value_strength="high" if len(time_efficiency_evidence) >= 30 else "medium",
+            )
+        )
 
     # Cost reduction (5+)
     if len(cost_reduction_evidence) >= 5:
-        observations.append(create_observation(
-            store,
-            "BUSINESS_VALUE_PATTERN",
-            f"Evidence shows cost awareness with {len(cost_reduction_evidence)} cost-related optimization activities.",
-            cost_reduction_evidence[:10],
-            value_category="cost_optimization",
-            value_strength="high" if len(cost_reduction_evidence) >= 15 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "BUSINESS_VALUE_PATTERN",
+                f"Evidence shows cost awareness with {len(cost_reduction_evidence)} cost-related optimization activities.",
+                cost_reduction_evidence[:10],
+                value_category="cost_optimization",
+                value_strength="high" if len(cost_reduction_evidence) >= 15 else "medium",
+            )
+        )
 
     # Automation (5+)
     if len(automation_evidence) >= 5:
-        observations.append(create_observation(
-            store,
-            "BUSINESS_VALUE_PATTERN",
-            f"Evidence demonstrates automation mindset with {len(automation_evidence)} automation activities.",
-            automation_evidence[:10],
-            value_category="automation",
-            value_strength="high" if len(automation_evidence) >= 15 else "medium"
-        ))
+        observations.append(
+            create_observation(
+                store,
+                "BUSINESS_VALUE_PATTERN",
+                f"Evidence demonstrates automation mindset with {len(automation_evidence)} automation activities.",
+                automation_evidence[:10],
+                value_category="automation",
+                value_strength="high" if len(automation_evidence) >= 15 else "medium",
+            )
+        )
 
     return observations
 
@@ -1339,14 +1316,30 @@ def infer_observations(store: GraphStore) -> list[dict]:
     observations = []
     for technology, refs in by_technology.items():
         if len(refs) >= 2:
-            observations.append(create_observation(store, "TECHNOLOGY_USAGE_PATTERN", f"Repeated evidence mentions {technology}.", refs, technology=technology))
+            observations.append(
+                create_observation(
+                    store,
+                    "TECHNOLOGY_USAGE_PATTERN",
+                    f"Repeated evidence mentions {technology}.",
+                    refs,
+                    technology=technology,
+                )
+            )
 
     for domain, refs in by_domain.items():
         if len(refs) >= 2:
-            observations.append(create_observation(store, "DOMAIN_EXPERIENCE_PATTERN", f"Repeated evidence relates to {domain}.", refs, domain=domain))
+            observations.append(
+                create_observation(
+                    store, "DOMAIN_EXPERIENCE_PATTERN", f"Repeated evidence relates to {domain}.", refs, domain=domain
+                )
+            )
 
     if documentation:
-        observations.append(create_observation(store, "DOCUMENTATION_PATTERN", "Evidence includes documentation activity.", documentation))
+        observations.append(
+            create_observation(
+                store, "DOCUMENTATION_PATTERN", "Evidence includes documentation activity.", documentation
+            )
+        )
 
     # Infer impact signal patterns
     impact_observations = infer_impact_patterns(store, career_evidence)
@@ -1364,7 +1357,9 @@ def infer_observations(store: GraphStore) -> list[dict]:
     return observations
 
 
-def create_observation(store: GraphStore, observation_type: str, statement: str, evidence: list[dict], **metadata: object) -> dict:
+def create_observation(
+    store: GraphStore, observation_type: str, statement: str, evidence: list[dict], **metadata: object
+) -> dict:
     evidence_refs = sorted(item["id"] for item in evidence)
     observation_id = "observation:" + stable_hash([observation_type, statement, evidence_refs])
     privacy_level = most_restrictive([item["properties"].get("privacy_level", "private") for item in evidence])
@@ -1421,10 +1416,9 @@ def generate_knowledge(store: GraphStore) -> list[dict]:
                     existing_props["evidence_refs"].append(evidence_id)
 
             if existing_props.get("status") != "accepted":
-                existing_props["privacy_level"] = most_restrictive([
-                    existing_props["privacy_level"],
-                    props["privacy_level"]
-                ])
+                existing_props["privacy_level"] = most_restrictive(
+                    [existing_props["privacy_level"], props["privacy_level"]]
+                )
 
             # Use highest confidence
             if props["confidence"] == "high" or existing_props["confidence"] == "high":
@@ -1502,7 +1496,9 @@ def reviewable_items(store: GraphStore, status: str = "proposed", node_type: str
     ]
 
 
-def review_items(store: GraphStore, decision: str, node_type: str | None = None, reason: str = "", actor: str = "human") -> list[dict]:
+def review_items(
+    store: GraphStore, decision: str, node_type: str | None = None, reason: str = "", actor: str = "human"
+) -> list[dict]:
     return [
         review_node(store, item["id"], decision, reason, actor)
         for item in list(reviewable_items(store, node_type=node_type))
@@ -1548,50 +1544,50 @@ def knowledge_from_observation(props: dict) -> tuple[str, str]:
     if props["observation_type"] == "TECHNOLOGY_USAGE_PATTERN":
         return "TECHNOLOGY_EXPERIENCE", f"Practical experience with {metadata['technology']}."
     if props["observation_type"] == "DOMAIN_EXPERIENCE_PATTERN":
-        raw_domain = metadata['domain']
+        raw_domain = metadata["domain"]
         enriched_domain = enrich_domain(raw_domain)
         return "DOMAIN_EXPERIENCE", f"Practical experience in {enriched_domain}."
     if props["observation_type"] == "IMPACT_SIGNAL_PATTERN":
-        impact_category = metadata.get('impact_category', 'unknown')
-        signal_strength = metadata.get('signal_strength', 'medium')
+        impact_category = metadata.get("impact_category", "unknown")
+        # signal_strength = metadata.get("signal_strength", "medium")  # Reserved for future use
 
         impact_statements = {
-            'scale': "Demonstrated experience working at scale with high-volume systems.",
-            'performance': "Proven track record in performance optimization and system efficiency.",
-            'integration': "Strong expertise in system integration and API development.",
-            'customer_focus': "Customer-focused approach to software development.",
-            'quality': "Quality-driven development with emphasis on testing and reliability.",
+            "scale": "Demonstrated experience working at scale with high-volume systems.",
+            "performance": "Proven track record in performance optimization and system efficiency.",
+            "integration": "Strong expertise in system integration and API development.",
+            "customer_focus": "Customer-focused approach to software development.",
+            "quality": "Quality-driven development with emphasis on testing and reliability.",
         }
 
         statement = impact_statements.get(impact_category, "Evidence-backed impact achievement.")
         return "IMPACT_EXPERIENCE", statement
 
     if props["observation_type"] == "ARCHITECTURE_PATTERN":
-        architecture_category = metadata.get('architecture_category', 'unknown')
-        pattern_strength = metadata.get('pattern_strength', 'medium')
+        architecture_category = metadata.get("architecture_category", "unknown")
+        # pattern_strength = metadata.get("pattern_strength", "medium")  # Reserved for future use
 
         architecture_statements = {
-            'rest_api': "Experienced in REST API design and development.",
-            'event_driven': "Practical experience with event-driven architecture.",
-            'message_queue': "Hands-on experience with message queue systems.",
-            'distributed_systems': "Experience building distributed systems.",
-            'caching': "Proficient in implementing caching strategies.",
-            'microservices': "Experience with microservices architecture.",
+            "rest_api": "Experienced in REST API design and development.",
+            "event_driven": "Practical experience with event-driven architecture.",
+            "message_queue": "Hands-on experience with message queue systems.",
+            "distributed_systems": "Experience building distributed systems.",
+            "caching": "Proficient in implementing caching strategies.",
+            "microservices": "Experience with microservices architecture.",
         }
 
         statement = architecture_statements.get(architecture_category, "Evidence-backed architecture experience.")
         return "ARCHITECTURE_EXPERIENCE", statement
 
     if props["observation_type"] == "BUSINESS_VALUE_PATTERN":
-        value_category = metadata.get('value_category', 'unknown')
-        value_strength = metadata.get('value_strength', 'medium')
+        value_category = metadata.get("value_category", "unknown")
+        # value_strength = metadata.get("value_strength", "medium")  # Reserved for future use
 
         business_value_statements = {
-            'customer_focus': "Track record of delivering customer-centric solutions.",
-            'error_reduction': "Proven ability to improve system reliability through error reduction.",
-            'time_efficiency': "Demonstrated efficiency in delivering time-sensitive solutions.",
-            'cost_optimization': "Experience with cost-aware solution design.",
-            'automation': "Strong focus on process automation and efficiency gains.",
+            "customer_focus": "Track record of delivering customer-centric solutions.",
+            "error_reduction": "Proven ability to improve system reliability through error reduction.",
+            "time_efficiency": "Demonstrated efficiency in delivering time-sensitive solutions.",
+            "cost_optimization": "Experience with cost-aware solution design.",
+            "automation": "Strong focus on process automation and efficiency gains.",
         }
 
         statement = business_value_statements.get(value_category, "Evidence-backed business value contribution.")
@@ -1623,14 +1619,26 @@ def cluster_technology_knowledge(knowledge_items: list[dict]) -> list[dict]:
         statement = props["statement"]
 
         # Marketplace platforms (specific platforms)
-        if any(platform in statement for platform in [
-            "Shopee Integration", "Magalu Integration", "Mercado Livre Integration",
-            "Amazon Integration", "Dafiti Integration", "MadeiraMadeira Integration",
-            "Americanas Integration", "TikTok Shop Integration", "Via Varejo Integration"
-        ]):
+        if any(
+            platform in statement
+            for platform in [
+                "Shopee Integration",
+                "Magalu Integration",
+                "Mercado Livre Integration",
+                "Amazon Integration",
+                "Dafiti Integration",
+                "MadeiraMadeira Integration",
+                "Americanas Integration",
+                "TikTok Shop Integration",
+                "Via Varejo Integration",
+            ]
+        ):
             marketplace_items.append(item)
         # API-related (but not Marketplace Integration generic)
-        elif any(api_term in statement for api_term in ["API Development", "REST APIs", "Webhooks"]) and "Marketplace Integration" not in statement:
+        elif (
+            any(api_term in statement for api_term in ["API Development", "REST APIs", "Webhooks"])
+            and "Marketplace Integration" not in statement
+        ):
             api_items.append(item)
         # Generic Marketplace Integration or core technologies
         else:
@@ -1669,19 +1677,21 @@ def cluster_technology_knowledge(knowledge_items: list[dict]) -> list[dict]:
         cluster_statement += "."
 
         # Create aggregated item
-        clustered.append({
-            "knowledge_id": "cluster:marketplace_integration",
-            "type": "TECHNOLOGY_EXPERIENCE",
-            "statement": cluster_statement,
-            "base_statement": f"Practical experience with E-commerce Marketplace Integration.",
-            "confidence": "high",
-            "support_strength": "strong",
-            "evidence_context": {"evidence_count": len(all_evidence_refs)},
-            "observation_refs": all_observation_refs,
-            "evidence_refs": all_evidence_refs,
-            "cluster_type": "marketplace_integration",
-            "cluster_members": platform_names,
-        })
+        clustered.append(
+            {
+                "knowledge_id": "cluster:marketplace_integration",
+                "type": "TECHNOLOGY_EXPERIENCE",
+                "statement": cluster_statement,
+                "base_statement": "Practical experience with E-commerce Marketplace Integration.",
+                "confidence": "high",
+                "support_strength": "strong",
+                "evidence_context": {"evidence_count": len(all_evidence_refs)},
+                "observation_refs": all_observation_refs,
+                "evidence_refs": all_evidence_refs,
+                "cluster_type": "marketplace_integration",
+                "cluster_members": platform_names,
+            }
+        )
     else:
         # Not enough to cluster, add individually
         clustered.extend(marketplace_items)
@@ -1705,19 +1715,21 @@ def cluster_technology_knowledge(knowledge_items: list[dict]) -> list[dict]:
 
         cluster_statement = f"API Development & Integration ({len(all_evidence_refs)} evidence): {', '.join([t.split(' (')[0] for t in api_types])}."
 
-        clustered.append({
-            "knowledge_id": "cluster:api_development",
-            "type": "TECHNOLOGY_EXPERIENCE",
-            "statement": cluster_statement,
-            "base_statement": f"Practical experience with API Development & Integration.",
-            "confidence": "high",
-            "support_strength": "strong",
-            "evidence_context": {"evidence_count": len(all_evidence_refs)},
-            "observation_refs": all_observation_refs,
-            "evidence_refs": all_evidence_refs,
-            "cluster_type": "api_development",
-            "cluster_members": api_types,
-        })
+        clustered.append(
+            {
+                "knowledge_id": "cluster:api_development",
+                "type": "TECHNOLOGY_EXPERIENCE",
+                "statement": cluster_statement,
+                "base_statement": "Practical experience with API Development & Integration.",
+                "confidence": "high",
+                "support_strength": "strong",
+                "evidence_context": {"evidence_count": len(all_evidence_refs)},
+                "observation_refs": all_observation_refs,
+                "evidence_refs": all_evidence_refs,
+                "cluster_type": "api_development",
+                "cluster_members": api_types,
+            }
+        )
     else:
         clustered.extend(api_items)
 
@@ -1737,12 +1749,7 @@ def generate_skill_matrix(store: GraphStore) -> dict:
         evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
 
         # Enrich statement with context
-        enriched_statement = enrich_knowledge_statement(
-            props["knowledge_type"],
-            props["statement"],
-            evidence,
-            store
-        )
+        enriched_statement = enrich_knowledge_statement(props["knowledge_type"], props["statement"], evidence, store)
 
         rows.append(
             {
@@ -1763,11 +1770,19 @@ def generate_skill_matrix(store: GraphStore) -> dict:
     domain_rows = [r for r in rows if r["type"] == "DOMAIN_EXPERIENCE"]
     other_rows = [r for r in rows if r["type"] not in ["TECHNOLOGY_EXPERIENCE", "DOMAIN_EXPERIENCE"]]
 
-    clustered_tech_rows = cluster_technology_knowledge([
-        {"properties": {"statement": r["base_statement"], "evidence_refs": r["evidence_refs"],
-         "observation_refs": r["observation_refs"], "confidence": r["confidence"]}}
-        for r in tech_rows
-    ])
+    clustered_tech_rows = cluster_technology_knowledge(
+        [
+            {
+                "properties": {
+                    "statement": r["base_statement"],
+                    "evidence_refs": r["evidence_refs"],
+                    "observation_refs": r["observation_refs"],
+                    "confidence": r["confidence"],
+                }
+            }
+            for r in tech_rows
+        ]
+    )
 
     # Convert back to row format
     final_tech_rows = []
@@ -1822,7 +1837,7 @@ def artifact_topic(statement: str) -> str:
     topic = statement.rstrip(".")
     for prefix in ("Practical experience with ", "Practical experience in ", "Experience with ", "Experienced in "):
         if topic.startswith(prefix):
-            return topic[len(prefix):]
+            return topic[len(prefix) :]
     return topic
 
 
@@ -1905,12 +1920,7 @@ def generate_resume_draft(store: GraphStore) -> dict:
         evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
 
         # Enrich statement with context
-        enriched_statement = enrich_knowledge_statement(
-            props["knowledge_type"],
-            props["statement"],
-            evidence,
-            store
-        )
+        enriched_statement = enrich_knowledge_statement(props["knowledge_type"], props["statement"], evidence, store)
 
         highlights.append(
             {
@@ -1931,7 +1941,13 @@ def generate_resume_draft(store: GraphStore) -> dict:
         elif props["knowledge_type"] == "DOMAIN_EXPERIENCE":
             domain_count += 1
 
-    highlights.sort(key=lambda row: (claim_strength_rank(row["support_strength"]), -row["evidence_context"]["evidence_count"], row["statement"]))
+    highlights.sort(
+        key=lambda row: (
+            claim_strength_rank(row["support_strength"]),
+            -row["evidence_context"]["evidence_count"],
+            row["statement"],
+        )
+    )
 
     # Generate professional summary
     summary = "Backend Engineer with evidence-backed experience in distributed systems, marketplace integrations, and API development."
@@ -1979,12 +1995,7 @@ def generate_linkedin_draft(store: GraphStore) -> dict:
         evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
 
         # Enrich statement with context
-        enriched_statement = enrich_knowledge_statement(
-            props["knowledge_type"],
-            props["statement"],
-            evidence,
-            store
-        )
+        enriched_statement = enrich_knowledge_statement(props["knowledge_type"], props["statement"], evidence, store)
 
         highlights.append(
             {
@@ -2029,7 +2040,13 @@ def generate_linkedin_draft(store: GraphStore) -> dict:
             f"All claims are traceable to real engineering work and human-reviewed for accuracy."
         )
 
-    highlights.sort(key=lambda row: (claim_strength_rank(row["support_strength"]), -row["evidence_context"]["evidence_count"], row["statement"]))
+    highlights.sort(
+        key=lambda row: (
+            claim_strength_rank(row["support_strength"]),
+            -row["evidence_context"]["evidence_count"],
+            row["statement"],
+        )
+    )
 
     artifact_id = "artifact:" + stable_hash(["LinkedIn Draft", headline, about, highlights])
     artifact, _ = store.create_node(
@@ -2063,50 +2080,47 @@ def generate_tailored_resume(store: GraphStore, job_description_id: str) -> dict
     job_description = get_job_description_by_id(store, job_description_id)
     if not job_description:
         raise ValueError(f"Job description not found: {job_description_id}")
-    
+
     job_metadata = job_description["properties"].get("metadata", {})
     job_title = job_metadata.get("title", "Target Role")
-    
+
     # Get matched and unmatched requirements from Gap Analysis
     matched_requirements, unmatched_requirements = job_requirement_matches(store)
-    
+
     # Filter requirements for this specific job
     job_requirements = extract_job_requirements(job_description)
     job_req_keys = requirement_key_set(job_requirements)
-    
+
     matched_for_job = [m for m in matched_requirements if requirement_key(m["requirement"]) in job_req_keys]
     unmatched_for_job = [u for u in unmatched_requirements if requirement_key(u["requirement"]) in job_req_keys]
-    
+
     # Get all accepted artifact-safe knowledge
     all_knowledge = list(accepted_artifact_safe_knowledge(store))
-    
+
     # Filter by relevance to this job
     relevant_knowledge = filter_knowledge_by_relevance(all_knowledge, matched_for_job, unmatched_for_job, min_score=0.5)
-    
+
     # Generate highlights with relevance scores
     highlights = []
     tech_count = 0
     domain_count = 0
-    
+
     for item in relevant_knowledge:
         props = item["properties"]
         evidence_refs = props["evidence_refs"]
         evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
-        
+
         relevance_score = score_knowledge_relevance(item, matched_for_job, unmatched_for_job)
-        
+
         # Determine which requirements this knowledge matches
         tech = technology_from_statement(props["statement"])
         tech_key = requirement_key(tech)
-        matches_requirements = [m["requirement"] for m in matched_for_job if requirement_key(m["requirement"]) == tech_key]
-        
-        enriched_statement = enrich_knowledge_statement(
-            props["knowledge_type"],
-            props["statement"],
-            evidence,
-            store
-        )
-        
+        matches_requirements = [
+            m["requirement"] for m in matched_for_job if requirement_key(m["requirement"]) == tech_key
+        ]
+
+        enriched_statement = enrich_knowledge_statement(props["knowledge_type"], props["statement"], evidence, store)
+
         highlights.append(
             {
                 "knowledge_id": item["id"],
@@ -2122,27 +2136,33 @@ def generate_tailored_resume(store: GraphStore, job_description_id: str) -> dict
                 "evidence_refs": props["evidence_refs"],
             }
         )
-        
+
         if props["knowledge_type"] == "TECHNOLOGY_EXPERIENCE":
             tech_count += 1
         elif props["knowledge_type"] == "DOMAIN_EXPERIENCE":
             domain_count += 1
-    
+
     # Sort by relevance score, then by strength, then by evidence count
-    highlights.sort(key=lambda row: (-row["relevance_score"], claim_strength_rank(row["support_strength"]), -row["evidence_context"]["evidence_count"]))
-    
+    highlights.sort(
+        key=lambda row: (
+            -row["relevance_score"],
+            claim_strength_rank(row["support_strength"]),
+            -row["evidence_context"]["evidence_count"],
+        )
+    )
+
     # Generate tailored summary
     matched_count = len(matched_for_job)
     total_requirements = len(job_requirements)
     evidence_count = sum(len(h["evidence_refs"]) for h in highlights)
-    
+
     summary = (
         f"Backend Engineer tailored for {job_title}. "
         f"Strong match with {matched_count}/{total_requirements} key requirements, "
         f"supported by {evidence_count}+ evidence-backed professional activities "
         f"across {tech_count} relevant technologies and {domain_count} business domains."
     )
-    
+
     artifact_id = "artifact:" + stable_hash(["Tailored Resume", job_description_id, highlights, summary])
     artifact, _ = store.create_node(
         node(
@@ -2183,7 +2203,9 @@ def generate_tailored_resume(store: GraphStore, job_description_id: str) -> dict
     return artifact
 
 
-def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, target_company: str = "the company") -> dict:
+def generate_tailored_cover_letter(
+    store: GraphStore, job_description_id: str, target_company: str = "the company"
+) -> dict:
     """
     Generate cover letter tailored to specific job description.
     Highlights matched requirements and addresses role fit.
@@ -2191,19 +2213,19 @@ def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, t
     job_description = get_job_description_by_id(store, job_description_id)
     if not job_description:
         raise ValueError(f"Job description not found: {job_description_id}")
-    
+
     job_metadata = job_description["properties"].get("metadata", {})
     job_title = job_metadata.get("title", "the position")
     job_technologies = job_metadata.get("technologies", [])
-    
+
     # Get matched and unmatched requirements
     matched_requirements, unmatched_requirements = job_requirement_matches(store)
-    
+
     # Filter for this specific job
     job_req_keys = requirement_key_set(job_technologies)
     matched_for_job = [m for m in matched_requirements if requirement_key(m["requirement"]) in job_req_keys]
     unmatched_for_job = [u for u in unmatched_requirements if requirement_key(u["requirement"]) in job_req_keys]
-    
+
     # Get top matched requirements with evidence
     top_matches = []
     for match in matched_for_job[:5]:  # Top 5 matches
@@ -2212,26 +2234,28 @@ def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, t
             props = knowledge["properties"]
             evidence_refs = props["evidence_refs"]
             evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
-            top_matches.append({
-                "requirement": match["requirement"],
-                "knowledge_id": match["knowledge_id"],
-                "statement": props["statement"],
-                "evidence_count": len(evidence),
-                "evidence_context": evidence_context(evidence),
-                "observation_refs": props["observation_refs"],
-                "evidence_refs": evidence_refs,
-            })
-    
+            top_matches.append(
+                {
+                    "requirement": match["requirement"],
+                    "knowledge_id": match["knowledge_id"],
+                    "statement": props["statement"],
+                    "evidence_count": len(evidence),
+                    "evidence_context": evidence_context(evidence),
+                    "observation_refs": props["observation_refs"],
+                    "evidence_refs": evidence_refs,
+                }
+            )
+
     # Opening paragraph
     opening = (
         f"I am writing to express my strong interest in the {job_title} position at {target_company}. "
         f"With evidence-backed experience across {len(matched_for_job)} of your key technical requirements, "
         f"I am confident I can contribute effectively to your team from day one."
     )
-    
+
     # Body paragraphs - highlight matched requirements
     body_paragraphs = []
-    
+
     if len(top_matches) >= 3:
         # Group top 3 matches into a paragraph
         match_list = ", ".join([m["requirement"] for m in top_matches[:3]])
@@ -2241,7 +2265,7 @@ def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, t
             f"supported by {evidence_total}+ documented professional activities demonstrating hands-on experience "
             f"with these technologies in production environments."
         )
-    
+
     # Highlight strongest match with detail
     if top_matches:
         strongest = top_matches[0]
@@ -2250,7 +2274,7 @@ def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, t
             f"evidence records across real-world engineering work. This includes direct experience with marketplace integrations, "
             f"distributed systems, and API development at scale."
         )
-    
+
     # Address 1-2 gaps proactively (if any)
     gap_paragraph = None
     if unmatched_for_job and len(unmatched_for_job) <= 3:
@@ -2261,14 +2285,14 @@ def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, t
             f"in related technologies and am committed to quickly ramping up in any areas where your specific tech stack differs "
             f"from my current environment. My track record demonstrates consistent ability to learn and adopt new technologies effectively."
         )
-    
+
     # Closing
     closing = (
         f"I am excited about the opportunity to bring my evidence-backed engineering experience to {target_company}. "
         f"I would welcome the chance to discuss how my background aligns with your team's needs. "
         f"Thank you for your consideration."
     )
-    
+
     # Combine into claims
     claims = [
         {
@@ -2279,35 +2303,41 @@ def generate_tailored_cover_letter(store: GraphStore, job_description_id: str, t
             "observation_refs": [],
         }
     ]
-    
+
     for idx, paragraph in enumerate(body_paragraphs):
         relevant_knowledge = top_matches[min(idx, len(top_matches) - 1)] if top_matches else None
-        claims.append({
-            "section": "body",
-            "statement": paragraph,
-            "knowledge_id": relevant_knowledge["knowledge_id"] if relevant_knowledge else None,
-            "evidence_refs": relevant_knowledge["evidence_refs"] if relevant_knowledge else [],
-            "observation_refs": relevant_knowledge["observation_refs"] if relevant_knowledge else [],
-            "evidence_context": relevant_knowledge["evidence_context"] if relevant_knowledge else {},
-        })
-    
+        claims.append(
+            {
+                "section": "body",
+                "statement": paragraph,
+                "knowledge_id": relevant_knowledge["knowledge_id"] if relevant_knowledge else None,
+                "evidence_refs": relevant_knowledge["evidence_refs"] if relevant_knowledge else [],
+                "observation_refs": relevant_knowledge["observation_refs"] if relevant_knowledge else [],
+                "evidence_context": relevant_knowledge["evidence_context"] if relevant_knowledge else {},
+            }
+        )
+
     if gap_paragraph:
-        claims.append({
-            "section": "gaps",
-            "statement": gap_paragraph,
+        claims.append(
+            {
+                "section": "gaps",
+                "statement": gap_paragraph,
+                "knowledge_id": None,
+                "evidence_refs": [],
+                "observation_refs": [],
+            }
+        )
+
+    claims.append(
+        {
+            "section": "closing",
+            "statement": closing,
             "knowledge_id": None,
             "evidence_refs": [],
             "observation_refs": [],
-        })
-    
-    claims.append({
-        "section": "closing",
-        "statement": closing,
-        "knowledge_id": None,
-        "evidence_refs": [],
-        "observation_refs": [],
-    })
-    
+        }
+    )
+
     artifact_id = "artifact:" + stable_hash(["Tailored Cover Letter", job_description_id, target_company, claims])
     artifact, _ = store.create_node(
         node(
@@ -2351,19 +2381,19 @@ def generate_interview_prep_guide(store: GraphStore, job_description_id: str) ->
     job_description = get_job_description_by_id(store, job_description_id)
     if not job_description:
         raise ValueError(f"Job description not found: {job_description_id}")
-    
+
     job_metadata = job_description["properties"].get("metadata", {})
     job_title = job_metadata.get("title", "the position")
     job_technologies = job_metadata.get("technologies", [])
-    
+
     # Get matched and unmatched requirements
     matched_requirements, unmatched_requirements = job_requirement_matches(store)
-    
+
     # Filter for this specific job
     job_req_keys = requirement_key_set(job_technologies)
     matched_for_job = [m for m in matched_requirements if requirement_key(m["requirement"]) in job_req_keys]
     unmatched_for_job = [u for u in unmatched_requirements if requirement_key(u["requirement"]) in job_req_keys]
-    
+
     # Strengths to Emphasize (matched requirements with strong evidence)
     strengths = []
     for match in matched_for_job:
@@ -2372,64 +2402,76 @@ def generate_interview_prep_guide(store: GraphStore, job_description_id: str) ->
             props = knowledge["properties"]
             evidence_refs = props["evidence_refs"]
             evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
-            strengths.append({
-                "requirement": match["requirement"],
-                "knowledge_id": match["knowledge_id"],
-                "statement": props["statement"],
-                "evidence_count": len(evidence),
-                "confidence": props["confidence"],
-                "talking_points": f"Emphasize {len(evidence)} documented activities with {match['requirement']} in production environments.",
-                "evidence_context": evidence_context(evidence),
-                "observation_refs": props["observation_refs"],
-                "evidence_refs": evidence_refs,
-            })
-    
+            strengths.append(
+                {
+                    "requirement": match["requirement"],
+                    "knowledge_id": match["knowledge_id"],
+                    "statement": props["statement"],
+                    "evidence_count": len(evidence),
+                    "confidence": props["confidence"],
+                    "talking_points": f"Emphasize {len(evidence)} documented activities with {match['requirement']} in production environments.",
+                    "evidence_context": evidence_context(evidence),
+                    "observation_refs": props["observation_refs"],
+                    "evidence_refs": evidence_refs,
+                }
+            )
+
     # Topics to Review (unmatched requirements - gaps)
     topics_to_review = []
     for gap in unmatched_for_job:
-        topics_to_review.append({
-            "requirement": gap["requirement"],
-            "study_priority": "high" if len(gap.get("job_titles", [])) > 1 else "medium",
-            "talking_points": f"Be prepared to discuss learning approach or related transferable experience if asked about {gap['requirement']}.",
-        })
-    
+        topics_to_review.append(
+            {
+                "requirement": gap["requirement"],
+                "study_priority": "high" if len(gap.get("job_titles", [])) > 1 else "medium",
+                "talking_points": f"Be prepared to discuss learning approach or related transferable experience if asked about {gap['requirement']}.",
+            }
+        )
+
     # Generate likely technical questions
     likely_questions = []
-    
+
     # Questions for matched requirements
     for match in matched_for_job[:5]:
-        likely_questions.append({
-            "category": "experience",
-            "question": f"Can you describe your experience with {match['requirement']}?",
-            "preparation": f"Refer to {len(store.nodes.get(match['knowledge_id'], {}).get('properties', {}).get('evidence_refs', []))} documented activities.",
-            "knowledge_id": match["knowledge_id"],
-        })
-    
+        likely_questions.append(
+            {
+                "category": "experience",
+                "question": f"Can you describe your experience with {match['requirement']}?",
+                "preparation": f"Refer to {len(store.nodes.get(match['knowledge_id'], {}).get('properties', {}).get('evidence_refs', []))} documented activities.",
+                "knowledge_id": match["knowledge_id"],
+            }
+        )
+
     # Questions for gaps
     for gap in unmatched_for_job[:3]:
-        likely_questions.append({
-            "category": "gap",
-            "question": f"What is your experience with {gap['requirement']}?",
-            "preparation": f"Acknowledge gap, emphasize related experience and learning ability. Mention foundational knowledge if applicable.",
-            "knowledge_id": None,
-        })
-    
+        likely_questions.append(
+            {
+                "category": "gap",
+                "question": f"What is your experience with {gap['requirement']}?",
+                "preparation": "Acknowledge gap, emphasize related experience and learning ability. Mention foundational knowledge if applicable.",
+                "knowledge_id": None,
+            }
+        )
+
     # Architecture/design questions
-    likely_questions.append({
-        "category": "architecture",
-        "question": "How do you approach designing a distributed system?",
-        "preparation": "Draw on marketplace integration experience, API design, and system integration work.",
-        "knowledge_id": None,
-    })
-    
+    likely_questions.append(
+        {
+            "category": "architecture",
+            "question": "How do you approach designing a distributed system?",
+            "preparation": "Draw on marketplace integration experience, API design, and system integration work.",
+            "knowledge_id": None,
+        }
+    )
+
     # Problem-solving questions
-    likely_questions.append({
-        "category": "problem_solving",
-        "question": "Describe a challenging bug you've debugged and how you approached it.",
-        "preparation": "Reference quality/testing evidence and bug fix activities from work history.",
-        "knowledge_id": None,
-    })
-    
+    likely_questions.append(
+        {
+            "category": "problem_solving",
+            "question": "Describe a challenging bug you've debugged and how you approached it.",
+            "preparation": "Reference quality/testing evidence and bug fix activities from work history.",
+            "knowledge_id": None,
+        }
+    )
+
     # STAR Stories to Prepare (align with job requirements)
     star_stories = []
     for match in matched_for_job[:5]:
@@ -2438,19 +2480,21 @@ def generate_interview_prep_guide(store: GraphStore, job_description_id: str) ->
             props = knowledge["properties"]
             evidence_refs = props["evidence_refs"]
             evidence = [store.nodes[ref] for ref in evidence_refs if ref in store.nodes]
-            star_stories.append({
-                "topic": match["requirement"],
-                "knowledge_id": match["knowledge_id"],
-                "statement": props["statement"],
-                "situation": f"Work with {match['requirement']} in production environment",
-                "task": f"Implement/improve {match['requirement']}-related functionality",
-                "action": f"Documented through {len(evidence)} professional activities",
-                "result": "Measurable impact supported by evidence",
-                "evidence_count": len(evidence),
-                "evidence_refs": evidence_refs,
-                "observation_refs": props["observation_refs"],
-            })
-    
+            star_stories.append(
+                {
+                    "topic": match["requirement"],
+                    "knowledge_id": match["knowledge_id"],
+                    "statement": props["statement"],
+                    "situation": f"Work with {match['requirement']} in production environment",
+                    "task": f"Implement/improve {match['requirement']}-related functionality",
+                    "action": f"Documented through {len(evidence)} professional activities",
+                    "result": "Measurable impact supported by evidence",
+                    "evidence_count": len(evidence),
+                    "evidence_refs": evidence_refs,
+                    "observation_refs": props["observation_refs"],
+                }
+            )
+
     # Questions to Ask Interviewer
     questions_for_interviewer = [
         "What does the day-to-day workflow look like for this role?",
@@ -2459,8 +2503,10 @@ def generate_interview_prep_guide(store: GraphStore, job_description_id: str) ->
         "What does success look like for this role in the first 90 days?",
         f"What's the team's experience level with {unmatched_for_job[0]['requirement'] if unmatched_for_job else 'your core technologies'}?",
     ]
-    
-    artifact_id = "artifact:" + stable_hash(["Interview Prep", job_description_id, strengths, topics_to_review, likely_questions])
+
+    artifact_id = "artifact:" + stable_hash(
+        ["Interview Prep", job_description_id, strengths, topics_to_review, likely_questions]
+    )
     artifact, _ = store.create_node(
         node(
             artifact_id,
@@ -2469,7 +2515,8 @@ def generate_interview_prep_guide(store: GraphStore, job_description_id: str) ->
             job_description_id=job_description_id,
             job_title=job_title,
             generated_at=now(),
-            knowledge_refs=[s["knowledge_id"] for s in strengths] + [q["knowledge_id"] for q in likely_questions if q["knowledge_id"]],
+            knowledge_refs=[s["knowledge_id"] for s in strengths]
+            + [q["knowledge_id"] for q in likely_questions if q["knowledge_id"]],
             matched_requirements=len(matched_for_job),
             unmatched_requirements=len(unmatched_for_job),
             version=1,
@@ -2510,18 +2557,18 @@ def generate_learning_roadmap(store: GraphStore, job_description_id: str) -> dic
     job_description = get_job_description_by_id(store, job_description_id)
     if not job_description:
         raise ValueError(f"Job description not found: {job_description_id}")
-    
+
     job_metadata = job_description["properties"].get("metadata", {})
     job_title = job_metadata.get("title", "the position")
     job_technologies = job_metadata.get("technologies", [])
-    
+
     # Get matched and unmatched requirements
     matched_requirements, unmatched_requirements = job_requirement_matches(store)
-    
+
     # Filter for this specific job
     job_req_keys = requirement_key_set(job_technologies)
     unmatched_for_job = [u for u in unmatched_requirements if requirement_key(u["requirement"]) in job_req_keys]
-    
+
     if not unmatched_for_job:
         # No gaps - return empty roadmap
         artifact_id = "artifact:" + stable_hash(["Learning Roadmap", job_description_id, []])
@@ -2544,13 +2591,13 @@ def generate_learning_roadmap(store: GraphStore, job_description_id: str) -> dic
             )
         )
         return artifact
-    
+
     # Prioritize gaps
     # Priority logic: foundational technologies > specialized tools > nice-to-haves
     foundational = {"Docker", "Kubernetes", "PostgreSQL", "MySQL", "Redis"}
     messaging = {"RabbitMQ", "Apache Kafka", "ActiveMQ Artemis"}
     monitoring = {"Prometheus", "Grafana", "Datadog", "New Relic"}
-    
+
     def priority_score(requirement: str) -> tuple[int, str]:
         req_lower = requirement.lower()
         if any(f.lower() in req_lower for f in foundational):
@@ -2560,16 +2607,18 @@ def generate_learning_roadmap(store: GraphStore, job_description_id: str) -> dic
         if any(m.lower() in req_lower for m in monitoring):
             return (3, "monitoring")
         return (4, "specialized")
-    
+
     # Sort by priority, then by frequency across jobs
-    sorted_gaps = sorted(unmatched_for_job, key=lambda g: (priority_score(g["requirement"])[0], -len(g.get("job_titles", []))))
-    
+    sorted_gaps = sorted(
+        unmatched_for_job, key=lambda g: (priority_score(g["requirement"])[0], -len(g.get("job_titles", [])))
+    )
+
     # Generate learning milestones
     milestones = []
     for idx, gap in enumerate(sorted_gaps):
         requirement = gap["requirement"]
         priority_rank, category = priority_score(requirement)
-        
+
         # Estimate time investment
         if priority_rank == 1:  # Foundational
             time_estimate = "2-4 weeks"
@@ -2583,11 +2632,11 @@ def generate_learning_roadmap(store: GraphStore, job_description_id: str) -> dic
         else:  # Specialized
             time_estimate = "1-2 weeks"
             depth = "basic"
-        
+
         # Learning resources (generic suggestions)
         resources = []
         req_lower = requirement.lower()
-        
+
         if "docker" in req_lower:
             resources = [
                 "Docker Official Documentation - Getting Started",
@@ -2636,23 +2685,25 @@ def generate_learning_roadmap(store: GraphStore, job_description_id: str) -> dic
                 f"{requirement} Best Practices Guide",
                 f"Hands-on: Build small project with {requirement}",
             ]
-        
-        milestones.append({
-            "milestone_number": idx + 1,
-            "requirement": requirement,
-            "priority": category,
-            "priority_rank": priority_rank,
-            "time_estimate": time_estimate,
-            "target_depth": depth,
-            "learning_goals": [
-                f"Understand core concepts and use cases for {requirement}",
-                f"Complete hands-on tutorial or small project",
-                f"Be able to discuss {requirement} architecture and tradeoffs",
-            ],
-            "resources": resources,
-            "validation": f"Build and deploy a small project using {requirement}",
-        })
-    
+
+        milestones.append(
+            {
+                "milestone_number": idx + 1,
+                "requirement": requirement,
+                "priority": category,
+                "priority_rank": priority_rank,
+                "time_estimate": time_estimate,
+                "target_depth": depth,
+                "learning_goals": [
+                    f"Understand core concepts and use cases for {requirement}",
+                    "Complete hands-on tutorial or small project",
+                    f"Be able to discuss {requirement} architecture and tradeoffs",
+                ],
+                "resources": resources,
+                "validation": f"Build and deploy a small project using {requirement}",
+            }
+        )
+
     # Summary
     total_time_min = len(milestones)  # Minimum weeks
     total_time_max = len(milestones) * 4  # Maximum weeks
@@ -2661,7 +2712,7 @@ def generate_learning_roadmap(store: GraphStore, job_description_id: str) -> dic
         f"by foundational importance. Estimated time: {total_time_min}-{total_time_max} weeks "
         f"depending on prior experience and learning pace. Focus on hands-on projects to build portfolio evidence."
     )
-    
+
     artifact_id = "artifact:" + stable_hash(["Learning Roadmap", job_description_id, milestones])
     artifact, _ = store.create_node(
         node(
@@ -2728,7 +2779,13 @@ def generate_star_stories_draft(store: GraphStore) -> dict:
             }
         )
 
-    stories.sort(key=lambda story: (claim_strength_rank(story["support_strength"]), -story["evidence_context"]["evidence_count"], story["title"]))
+    stories.sort(
+        key=lambda story: (
+            claim_strength_rank(story["support_strength"]),
+            -story["evidence_context"]["evidence_count"],
+            story["title"],
+        )
+    )
 
     artifact_id = "artifact:" + stable_hash(["STAR Stories", stories])
     artifact, _ = store.create_node(
@@ -2776,7 +2833,13 @@ def generate_interview_answers_draft(store: GraphStore) -> dict:
             }
         )
 
-    answers.sort(key=lambda answer: (claim_strength_rank(answer["support_strength"]), -answer["evidence_context"]["evidence_count"], answer["question"]))
+    answers.sort(
+        key=lambda answer: (
+            claim_strength_rank(answer["support_strength"]),
+            -answer["evidence_context"]["evidence_count"],
+            answer["question"],
+        )
+    )
 
     artifact_id = "artifact:" + stable_hash(["Interview Answers", answers])
     artifact, _ = store.create_node(
@@ -2816,11 +2879,19 @@ def generate_cover_letter_draft(store: GraphStore, target_role: str = "Backend E
             }
         )
 
-    claims.sort(key=lambda claim: (claim_strength_rank(claim["support_strength"]), -claim["evidence_context"]["evidence_count"], claim["statement"]))
+    claims.sort(
+        key=lambda claim: (
+            claim_strength_rank(claim["support_strength"]),
+            -claim["evidence_context"]["evidence_count"],
+            claim["statement"],
+        )
+    )
     selected = claims[:5]
     paragraphs = [
         f"I am interested in {target_role} roles where backend engineering, integration work, and reliable delivery matter.",
-        "My strongest evidence-backed areas are: " + "; ".join(claim["statement"] for claim in selected) if selected else "No artifact-safe accepted knowledge is available yet.",
+        "My strongest evidence-backed areas are: " + "; ".join(claim["statement"] for claim in selected)
+        if selected
+        else "No artifact-safe accepted knowledge is available yet.",
         "This draft intentionally avoids company-specific fit, private implementation details, and unsupported metrics until a target job description and human review are available.",
     ]
     artifact_id = "artifact:" + stable_hash(["Cover Letter", target_role, selected])
@@ -2849,7 +2920,11 @@ def generate_career_timeline_draft(store: GraphStore) -> dict:
     for item in accepted_artifact_safe_knowledge(store):
         props = item["properties"]
         evidence = [store.nodes[ref] for ref in props["evidence_refs"] if ref in store.nodes]
-        dates = [evidence_item["properties"]["occurred_at"] for evidence_item in evidence if evidence_item["properties"].get("occurred_at")]
+        dates = [
+            evidence_item["properties"]["occurred_at"]
+            for evidence_item in evidence
+            if evidence_item["properties"].get("occurred_at")
+        ]
         occurred_at = min(dates) if dates else ""
         milestones.append(
             {
@@ -2908,7 +2983,13 @@ def generate_gap_analysis_draft(store: GraphStore, target_role: str = "Backend E
         else:
             weak_evidence.append(row)
     strengths.sort(key=lambda row: (-row["evidence_context"]["evidence_count"], row["statement"]))
-    weak_evidence.sort(key=lambda row: (claim_strength_rank(row["support_strength"]), -row["evidence_context"]["evidence_count"], row["statement"]))
+    weak_evidence.sort(
+        key=lambda row: (
+            claim_strength_rank(row["support_strength"]),
+            -row["evidence_context"]["evidence_count"],
+            row["statement"],
+        )
+    )
 
     matched_requirements, unmatched_requirements = job_requirement_matches(store)
 
@@ -2917,7 +2998,9 @@ def generate_gap_analysis_draft(store: GraphStore, target_role: str = "Backend E
         "Missing evidence is not treated as missing ability.",
         "Use a target job description before making role-specific gap claims.",
     ]
-    artifact_id = "artifact:" + stable_hash(["Gap Analysis", target_role, strengths, weak_evidence, matched_requirements, unmatched_requirements, notes])
+    artifact_id = "artifact:" + stable_hash(
+        ["Gap Analysis", target_role, strengths, weak_evidence, matched_requirements, unmatched_requirements, notes]
+    )
     artifact, _ = store.create_node(
         node(
             artifact_id,
@@ -2940,7 +3023,12 @@ def generate_gap_analysis_draft(store: GraphStore, target_role: str = "Backend E
     )
     for row in strengths + weak_evidence:
         store.create_edge("ARTIFACT_GENERATED_FROM_KNOWLEDGE", artifact_id, row["knowledge_id"])
-    store.append_audit_record("artifact_generation", [artifact_id], "succeeded", {"strengths": len(strengths), "weak_evidence": len(weak_evidence)})
+    store.append_audit_record(
+        "artifact_generation",
+        [artifact_id],
+        "succeeded",
+        {"strengths": len(strengths), "weak_evidence": len(weak_evidence)},
+    )
     return artifact
 
 
@@ -2967,10 +3055,12 @@ def requirement_key_set(requirements: list[str]) -> set[str]:
     return {requirement_key(req) for req in requirements if requirement_key(req)}
 
 
-def score_knowledge_relevance(knowledge: dict, matched_requirements: list[dict], unmatched_requirements: list[dict]) -> float:
+def score_knowledge_relevance(
+    knowledge: dict, matched_requirements: list[dict], unmatched_requirements: list[dict]
+) -> float:
     """
     Score knowledge item relevance to job description.
-    
+
     Returns:
         0.0-1.0 score where:
         - 1.0: Direct match with job requirement
@@ -2980,42 +3070,46 @@ def score_knowledge_relevance(knowledge: dict, matched_requirements: list[dict],
     props = knowledge["properties"]
     knowledge_type = props.get("knowledge_type", "")
     statement = props.get("statement", "")
-    
+
     # Extract technology from knowledge statement
     tech = technology_from_statement(statement)
     tech_key = requirement_key(tech)
-    
+
     # Check if knowledge matches any job requirement
     matched_keys = {requirement_key(m["requirement"]) for m in matched_requirements}
-    unmatched_keys = {requirement_key(u["requirement"]) for u in unmatched_requirements}
-    
+
     if tech_key in matched_keys:
         return 1.0  # Perfect match
-    
+
     # Check for partial matches or related technologies
     if tech_key and any(tech_key in key or key in tech_key for key in matched_keys):
         return 0.8  # Close match
-    
+
     # TECHNOLOGY_EXPERIENCE is always somewhat relevant for tech roles
     if knowledge_type == "TECHNOLOGY_EXPERIENCE":
         return 0.5
-    
+
     # DOMAIN_EXPERIENCE might be relevant
     if knowledge_type == "DOMAIN_EXPERIENCE":
         return 0.4
-    
+
     # Other knowledge types have low baseline relevance
     return 0.3
 
 
-def filter_knowledge_by_relevance(knowledge_list: list[dict], matched_requirements: list[dict], unmatched_requirements: list[dict], min_score: float = 0.5) -> list[dict]:
+def filter_knowledge_by_relevance(
+    knowledge_list: list[dict],
+    matched_requirements: list[dict],
+    unmatched_requirements: list[dict],
+    min_score: float = 0.5,
+) -> list[dict]:
     """Filter and score knowledge items by relevance to job requirements"""
     scored = []
     for knowledge in knowledge_list:
         score = score_knowledge_relevance(knowledge, matched_requirements, unmatched_requirements)
         if score >= min_score:
             scored.append((knowledge, score))
-    
+
     # Sort by score descending, then by evidence count
     scored.sort(key=lambda item: (-item[1], -len(item[0]["properties"].get("evidence_refs", []))))
     return [knowledge for knowledge, score in scored]
@@ -3064,10 +3158,10 @@ def tailored_resume_markdown(artifact: dict) -> str:
     highlights = sections.get("highlights", [])
     matched = sections.get("matched_requirements", [])
     unmatched = sections.get("unmatched_requirements", [])
-    
+
     job_title = props.get("job_title", "Target Role")
     match_rate = props.get("match_rate", 0.0)
-    
+
     lines = [
         f"# Tailored Resume - {job_title}",
         "",
@@ -3079,37 +3173,41 @@ def tailored_resume_markdown(artifact: dict) -> str:
         "## Relevant Experience (Prioritized by Job Requirements)",
         "",
     ]
-    
+
     for row in highlights:
         count = row.get("evidence_context", {}).get("evidence_count", len(row.get("evidence_refs", [])))
         relevance = row.get("relevance_score", 0.0)
         matches = row.get("matches_requirements", [])
         match_str = f" [Matches: {', '.join(matches)}]" if matches else ""
         lines.append(f"- {row['statement']} ({count} records; relevance: {relevance:.1f}{match_str})")
-    
+
     if not highlights:
         lines.append("- No relevant experience found for this role.")
-    
-    lines.extend([
-        "",
-        "## Job Requirement Match Analysis",
-        "",
-        f"**Matched Requirements ({len(matched)}):**",
-        "",
-    ])
-    
+
+    lines.extend(
+        [
+            "",
+            "## Job Requirement Match Analysis",
+            "",
+            f"**Matched Requirements ({len(matched)}):**",
+            "",
+        ]
+    )
+
     for req in matched[:10]:  # Top 10
         lines.append(f"- ✅ {req['requirement']}")
-    
+
     if unmatched:
-        lines.extend([
-            "",
-            f"**Areas for Development ({len(unmatched)}):**",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                f"**Areas for Development ({len(unmatched)}):**",
+                "",
+            ]
+        )
         for req in unmatched[:5]:  # Top 5 gaps
             lines.append(f"- ⚠️ {req['requirement']}")
-    
+
     return "\n".join(lines)
 
 
@@ -3217,13 +3315,13 @@ def tailored_cover_letter_markdown(artifact: dict) -> str:
     props = artifact["properties"]
     sections = props.get("sections", {})
     claims = sections.get("claims", [])
-    
+
     job_title = props.get("job_title", "the position")
     target_company = props.get("target_company", "the company")
     matched = props.get("matched_requirements", 0)
     total = props.get("total_requirements", 0)
     match_rate = matched / total if total > 0 else 0.0
-    
+
     lines = [
         f"# Cover Letter - {job_title}",
         "",
@@ -3233,11 +3331,11 @@ def tailored_cover_letter_markdown(artifact: dict) -> str:
         "---",
         "",
     ]
-    
+
     for claim in claims:
         section = claim.get("section", "body")
         count = claim.get("evidence_context", {}).get("evidence_count", len(claim.get("evidence_refs", [])))
-        
+
         if section == "opening":
             lines.append("## Opening")
             lines.append("")
@@ -3249,16 +3347,16 @@ def tailored_cover_letter_markdown(artifact: dict) -> str:
             lines.append("")
             lines.append("## Closing")
             lines.append("")
-        
+
         if count > 0:
             lines.append(f"{claim['statement']}")
             lines.append("")
             lines.append(f"*(Supported by {count} evidence records)*")
         else:
             lines.append(claim["statement"])
-        
+
         lines.append("")
-    
+
     return "\n".join(lines)
 
 
@@ -3266,11 +3364,11 @@ def interview_prep_markdown(artifact: dict) -> str:
     """Render interview preparation guide"""
     props = artifact["properties"]
     sections = props.get("sections", {})
-    
+
     job_title = props.get("job_title", "the position")
     matched = props.get("matched_requirements", 0)
     unmatched = props.get("unmatched_requirements", 0)
-    
+
     lines = [
         f"# Interview Preparation - {job_title}",
         "",
@@ -3280,7 +3378,7 @@ def interview_prep_markdown(artifact: dict) -> str:
         "---",
         "",
     ]
-    
+
     # Strengths to Emphasize
     strengths = sections.get("strengths", [])
     if strengths:
@@ -3290,7 +3388,7 @@ def interview_prep_markdown(artifact: dict) -> str:
             lines.append(f"- **Evidence:** {strength['evidence_count']} documented activities")
             lines.append(f"- **Talking Points:** {strength['talking_points']}")
             lines.append("")
-    
+
     # Topics to Review
     topics = sections.get("topics_to_review", [])
     if topics:
@@ -3301,7 +3399,7 @@ def interview_prep_markdown(artifact: dict) -> str:
             lines.append(f"- **Priority:** {topic['study_priority']}")
             lines.append(f"- **Preparation:** {topic['talking_points']}")
             lines.append("")
-    
+
     # Likely Questions
     questions = sections.get("likely_questions", [])
     if questions:
@@ -3310,7 +3408,7 @@ def interview_prep_markdown(artifact: dict) -> str:
             lines.append(f"### Q: {q['question']}")
             lines.append(f"**Preparation:** {q['preparation']}")
             lines.append("")
-    
+
     # STAR Stories
     stories = sections.get("star_stories", [])
     if stories:
@@ -3321,7 +3419,7 @@ def interview_prep_markdown(artifact: dict) -> str:
             lines.append(f"- **Task:** {story['task']}")
             lines.append(f"- **Evidence:** {story['evidence_count']} documented activities")
             lines.append("")
-    
+
     # Questions for Interviewer
     interviewer_questions = sections.get("questions_for_interviewer", [])
     if interviewer_questions:
@@ -3329,7 +3427,7 @@ def interview_prep_markdown(artifact: dict) -> str:
         for q in interviewer_questions:
             lines.append(f"- {q}")
         lines.append("")
-    
+
     return "\n".join(lines)
 
 
@@ -3339,7 +3437,9 @@ def career_timeline_markdown(artifact: dict) -> str:
     for milestone in milestones:
         date = artifact_date(milestone["occurred_at"]) or "date supported by evidence"
         count = milestone.get("evidence_context", {}).get("evidence_count", len(milestone.get("evidence_refs", [])))
-        lines.append(f"- {date}: {milestone['statement']} ({count} records; {milestone['support_strength']}, {milestone['confidence']})")
+        lines.append(
+            f"- {date}: {milestone['statement']} ({count} records; {milestone['support_strength']}, {milestone['confidence']})"
+        )
     if not milestones:
         lines.append("- No artifact-safe accepted knowledge yet.")
     return "\n".join(lines)
@@ -3349,12 +3449,12 @@ def learning_roadmap_markdown(artifact: dict) -> str:
     """Render learning roadmap"""
     props = artifact["properties"]
     sections = props.get("sections", {})
-    
+
     job_title = props.get("job_title", "the position")
     gaps_count = props.get("gaps_count", 0)
     est_min = props.get("estimated_weeks_min", 0)
     est_max = props.get("estimated_weeks_max", 0)
-    
+
     lines = [
         f"# Learning Roadmap - {job_title}",
         "",
@@ -3368,38 +3468,40 @@ def learning_roadmap_markdown(artifact: dict) -> str:
         "---",
         "",
     ]
-    
+
     milestones = sections.get("milestones", [])
-    
+
     if not milestones:
         lines.append("No learning gaps identified. Your experience covers all key requirements.")
         return "\n".join(lines)
-    
+
     lines.extend(["## Learning Milestones", ""])
-    
+
     for milestone in milestones:
         priority_icon = "🔴" if milestone["priority_rank"] == 1 else "🟡" if milestone["priority_rank"] == 2 else "🟢"
-        
+
         lines.append(f"### {milestone['milestone_number']}. {priority_icon} {milestone['requirement']}")
         lines.append("")
-        lines.append(f"**Priority:** {milestone['priority']} | **Time:** {milestone['time_estimate']} | **Depth:** {milestone['target_depth']}")
+        lines.append(
+            f"**Priority:** {milestone['priority']} | **Time:** {milestone['time_estimate']} | **Depth:** {milestone['target_depth']}"
+        )
         lines.append("")
-        
+
         lines.append("**Learning Goals:**")
         for goal in milestone["learning_goals"]:
             lines.append(f"- {goal}")
         lines.append("")
-        
+
         lines.append("**Recommended Resources:**")
         for resource in milestone["resources"]:
             lines.append(f"- {resource}")
         lines.append("")
-        
+
         lines.append(f"**Validation:** {milestone['validation']}")
         lines.append("")
         lines.append("---")
         lines.append("")
-    
+
     return "\n".join(lines)
 
 
@@ -3457,7 +3559,9 @@ def artifact_claim_rows(artifact: dict) -> list[dict]:
     return list(sections.get("highlights", []))
 
 
-UNSUPPORTED_METRIC_PATTERN = re.compile(r"(\d+(\.\d+)?\s*%|\$\s*\d+|\bby\s+\d+|\b\d+(\.\d+)?x\s+(faster|slower|more|less))", re.IGNORECASE)
+UNSUPPORTED_METRIC_PATTERN = re.compile(
+    r"(\d+(\.\d+)?\s*%|\$\s*\d+|\bby\s+\d+|\b\d+(\.\d+)?x\s+(faster|slower|more|less))", re.IGNORECASE
+)
 PRIVATE_DETAIL_PATTERN = re.compile(r"(https?://\S+|\b[A-Z]{2,}-[A-Z]*\d+\b)")
 
 
@@ -3480,28 +3584,94 @@ def validate_artifact(artifact: dict, store: GraphStore) -> list[dict]:
         claim_text = artifact_claim_text(row)
 
         if "unsupported metric" not in claim_text.lower() and UNSUPPORTED_METRIC_PATTERN.search(claim_text):
-            warnings.append({"code": "possible_unsupported_metric", "claim_index": index, "knowledge_id": knowledge_id, "statement": statement})
+            warnings.append(
+                {
+                    "code": "possible_unsupported_metric",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "statement": statement,
+                }
+            )
         if PRIVATE_DETAIL_PATTERN.search(claim_text):
-            warnings.append({"code": "possible_private_source_detail", "claim_index": index, "knowledge_id": knowledge_id, "statement": statement})
+            warnings.append(
+                {
+                    "code": "possible_private_source_detail",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "statement": statement,
+                }
+            )
         if not knowledge_id:
             warnings.append({"code": "missing_knowledge_ref", "claim_index": index, "statement": statement})
             continue
         if not observation_refs:
-            warnings.append({"code": "missing_observation_refs", "claim_index": index, "knowledge_id": knowledge_id, "statement": statement})
+            warnings.append(
+                {
+                    "code": "missing_observation_refs",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "statement": statement,
+                }
+            )
         if not evidence_refs:
-            warnings.append({"code": "missing_evidence_refs", "claim_index": index, "knowledge_id": knowledge_id, "statement": statement})
+            warnings.append(
+                {
+                    "code": "missing_evidence_refs",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "statement": statement,
+                }
+            )
         missing_observation_refs = [ref for ref in observation_refs if ref not in store.nodes]
         if missing_observation_refs:
-            warnings.append({"code": "observation_ref_not_found", "claim_index": index, "knowledge_id": knowledge_id, "missing_refs": missing_observation_refs, "statement": statement})
+            warnings.append(
+                {
+                    "code": "observation_ref_not_found",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "missing_refs": missing_observation_refs,
+                    "statement": statement,
+                }
+            )
         missing_evidence_refs = [ref for ref in evidence_refs if ref not in store.nodes]
         if missing_evidence_refs:
-            warnings.append({"code": "evidence_ref_not_found", "claim_index": index, "knowledge_id": knowledge_id, "missing_refs": missing_evidence_refs, "statement": statement})
-        wrong_observation_ref_types = [ref for ref in observation_refs if ref in store.nodes and store.nodes[ref].get("node_type") != "ObservationNode"]
+            warnings.append(
+                {
+                    "code": "evidence_ref_not_found",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "missing_refs": missing_evidence_refs,
+                    "statement": statement,
+                }
+            )
+        wrong_observation_ref_types = [
+            ref
+            for ref in observation_refs
+            if ref in store.nodes and store.nodes[ref].get("node_type") != "ObservationNode"
+        ]
         if wrong_observation_ref_types:
-            warnings.append({"code": "observation_ref_wrong_type", "claim_index": index, "knowledge_id": knowledge_id, "refs": wrong_observation_ref_types, "statement": statement})
-        wrong_evidence_ref_types = [ref for ref in evidence_refs if ref in store.nodes and store.nodes[ref].get("node_type") != "EvidenceNode"]
+            warnings.append(
+                {
+                    "code": "observation_ref_wrong_type",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "refs": wrong_observation_ref_types,
+                    "statement": statement,
+                }
+            )
+        wrong_evidence_ref_types = [
+            ref for ref in evidence_refs if ref in store.nodes and store.nodes[ref].get("node_type") != "EvidenceNode"
+        ]
         if wrong_evidence_ref_types:
-            warnings.append({"code": "evidence_ref_wrong_type", "claim_index": index, "knowledge_id": knowledge_id, "refs": wrong_evidence_ref_types, "statement": statement})
+            warnings.append(
+                {
+                    "code": "evidence_ref_wrong_type",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "refs": wrong_evidence_ref_types,
+                    "statement": statement,
+                }
+            )
         context = row.get("evidence_context", {})
         if context and context.get("evidence_count") != len(evidence_refs):
             warnings.append(
@@ -3520,7 +3690,14 @@ def validate_artifact(artifact: dict, store: GraphStore) -> list[dict]:
 
         knowledge = store.nodes.get(knowledge_id)
         if not knowledge:
-            warnings.append({"code": "knowledge_not_found", "claim_index": index, "knowledge_id": knowledge_id, "statement": statement})
+            warnings.append(
+                {
+                    "code": "knowledge_not_found",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "statement": statement,
+                }
+            )
             continue
 
         props = knowledge["properties"]
@@ -3544,12 +3721,30 @@ def validate_artifact(artifact: dict, store: GraphStore) -> list[dict]:
                     "statement": statement,
                 }
             )
-        observation_refs_not_in_knowledge = [ref for ref in observation_refs if ref not in props.get("observation_refs", [])]
+        observation_refs_not_in_knowledge = [
+            ref for ref in observation_refs if ref not in props.get("observation_refs", [])
+        ]
         if observation_refs_not_in_knowledge:
-            warnings.append({"code": "observation_ref_not_in_knowledge", "claim_index": index, "knowledge_id": knowledge_id, "refs": observation_refs_not_in_knowledge, "statement": statement})
+            warnings.append(
+                {
+                    "code": "observation_ref_not_in_knowledge",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "refs": observation_refs_not_in_knowledge,
+                    "statement": statement,
+                }
+            )
         evidence_refs_not_in_knowledge = [ref for ref in evidence_refs if ref not in props.get("evidence_refs", [])]
         if evidence_refs_not_in_knowledge:
-            warnings.append({"code": "evidence_ref_not_in_knowledge", "claim_index": index, "knowledge_id": knowledge_id, "refs": evidence_refs_not_in_knowledge, "statement": statement})
+            warnings.append(
+                {
+                    "code": "evidence_ref_not_in_knowledge",
+                    "claim_index": index,
+                    "knowledge_id": knowledge_id,
+                    "refs": evidence_refs_not_in_knowledge,
+                    "statement": statement,
+                }
+            )
     return warnings
 
 
@@ -3568,16 +3763,23 @@ def warning_summary(warnings: list[dict]) -> str:
 def artifact_validation_markdown(artifact: dict, warnings: list[dict]) -> str:
     title = artifact.get("properties", {}).get("artifact_type", "Artifact")
     status = "REVIEW" if warnings else "PASS"
-    readiness = "Ready for human export review." if status == "PASS" else "Resolve validation warnings before export review."
-    lines = [f"# {title} Validation", "", f"- status: {status}", f"- warnings: {warning_summary(warnings)}", f"- readiness: {readiness}", ""]
+    readiness = (
+        "Ready for human export review." if status == "PASS" else "Resolve validation warnings before export review."
+    )
+    lines = [
+        f"# {title} Validation",
+        "",
+        f"- status: {status}",
+        f"- warnings: {warning_summary(warnings)}",
+        f"- readiness: {readiness}",
+        "",
+    ]
     for warning in warnings:
         code = warning.get("code", "unknown")
         statement = warning.get("statement", "")
         knowledge_id = warning.get("knowledge_id", "")
         details = ", ".join(
-            f"{key}={value}"
-            for key, value in warning.items()
-            if key not in {"code", "statement", "knowledge_id"}
+            f"{key}={value}" for key, value in warning.items() if key not in {"code", "statement", "knowledge_id"}
         )
         suffix = f" ({details})" if details else ""
         knowledge_part = f" [{knowledge_id}]" if knowledge_id else ""
@@ -3607,15 +3809,27 @@ def artifact_traceability(artifact: dict, store: GraphStore) -> list[dict]:
                         "cluster_members": row.get("cluster_members", []),
                     },
                     "observations": [],  # Clusters aggregate multiple observations
-                    "evidence": [evidence_summary(store.nodes[ref], store) for ref in row.get("evidence_refs", []) if ref in store.nodes and store.nodes[ref].get("node_type") == "EvidenceNode"][:5],  # Show top 5
+                    "evidence": [
+                        evidence_summary(store.nodes[ref], store)
+                        for ref in row.get("evidence_refs", [])
+                        if ref in store.nodes and store.nodes[ref].get("node_type") == "EvidenceNode"
+                    ][:5],  # Show top 5
                 }
             )
             continue
 
         # Regular knowledge item
         knowledge = store.nodes.get(knowledge_id)
-        observations = [store.nodes[ref] for ref in row.get("observation_refs", []) if ref in store.nodes and store.nodes[ref].get("node_type") == "ObservationNode"]
-        evidence = [store.nodes[ref] for ref in row.get("evidence_refs", []) if ref in store.nodes and store.nodes[ref].get("node_type") == "EvidenceNode"]
+        observations = [
+            store.nodes[ref]
+            for ref in row.get("observation_refs", [])
+            if ref in store.nodes and store.nodes[ref].get("node_type") == "ObservationNode"
+        ]
+        evidence = [
+            store.nodes[ref]
+            for ref in row.get("evidence_refs", [])
+            if ref in store.nodes and store.nodes[ref].get("node_type") == "EvidenceNode"
+        ]
         traces.append(
             {
                 "claim": row["statement"],
@@ -3651,7 +3865,10 @@ def evidence_summary(evidence: dict, store: GraphStore) -> dict:
         "source_entity_id": props["source_entity_id"],
         "occurred_at": props["occurred_at"],
         "privacy_level": props["privacy_level"],
-        "summary": metadata.get("title") or metadata.get("message") or metadata.get("summary") or props["source_entity_id"],
+        "summary": metadata.get("title")
+        or metadata.get("message")
+        or metadata.get("summary")
+        or props["source_entity_id"],
     }
 
 
@@ -3663,10 +3880,10 @@ def artifact_traceability_markdown(artifact: dict, store: GraphStore) -> str:
         lines.append("")
 
         # Check if it's a cluster
-        if trace['knowledge'].get('cluster', False):
+        if trace["knowledge"].get("cluster", False):
             lines.append(f"- Knowledge: {trace['knowledge']['type']} (CLUSTER - {trace['knowledge']['status']})")
             lines.append(f"- Cluster aggregates {len(trace['knowledge']['cluster_members'])} platform integrations:")
-            for member in trace['knowledge']['cluster_members']:
+            for member in trace["knowledge"]["cluster_members"]:
                 lines.append(f"  - {member}")
             lines.append(f"- Sample evidence ({len(trace['evidence'])} total):")
         else:
