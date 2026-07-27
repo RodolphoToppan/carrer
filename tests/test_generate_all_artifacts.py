@@ -1,11 +1,13 @@
-import sys
+import importlib.util
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+SPEC = importlib.util.spec_from_file_location("generate_all_artifacts", ROOT / "scripts" / "generate_all_artifacts.py")
+generate_all_artifacts = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(generate_all_artifacts)
 
-from generate_all_artifacts import validation_summary_lines
+validation_summary_lines = generate_all_artifacts.validation_summary_lines
 
 
 class GenerateAllArtifactsTest(unittest.TestCase):

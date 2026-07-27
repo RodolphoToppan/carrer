@@ -6,7 +6,14 @@ from collections import defaultdict
 from pathlib import Path
 
 # Compatibility layer: Import domain functions from new modular structure
-from carrer.domain.hashing import most_restrictive, stable_hash
+from carrer.domain.enums import (
+    PRIVACY_LEVELS as SUPPORTED_PRIVACY_LEVELS,
+)
+from carrer.domain.enums import (
+    SOURCE_ENTITY_TYPES as SUPPORTED_SOURCE_ENTITY_TYPES,
+)
+from carrer.domain.hashing import stable_hash
+from carrer.domain.privacy import most_restrictive
 from carrer.domain.timestamps import now
 
 # Import graph storage from new storage module
@@ -15,8 +22,6 @@ from carrer.storage.json_graph_storage import JsonGraphStorage
 # Re-export for backward compatibility
 # GraphStore is now an alias to JsonGraphStorage
 GraphStore = JsonGraphStorage
-
-__all__ = ["now", "stable_hash", "most_restrictive", "GraphStore"]
 
 
 def node(node_id: str, node_type: str, **properties: object) -> dict:
@@ -35,17 +40,6 @@ def load_source_input(path: str | Path) -> dict:
     return data
 
 
-SUPPORTED_SOURCE_ENTITY_TYPES = {
-    "work_item",
-    "pull_request",
-    "merge_request",
-    "commit",
-    "review_comment",
-    "documentation",
-    "job_description",
-    "branch",
-}
-SUPPORTED_PRIVACY_LEVELS = {"private", "internal", "artifact_safe", "exported"}
 TECHNOLOGY_KEYWORDS = {
     # Programming Languages
     "java": "Java",

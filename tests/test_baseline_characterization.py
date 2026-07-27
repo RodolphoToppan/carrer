@@ -10,17 +10,15 @@ by adding targeted coverage for:
 They do NOT fix business logic - they document current behavior.
 """
 
-import sys
 import unittest
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
 
 from career_intelligence_mvp import (
     GraphStore,
     stable_hash,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class CoreStabilityTest(unittest.TestCase):
