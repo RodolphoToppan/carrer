@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import json
 import re
 from collections import defaultdict
 from pathlib import Path
 
 # Compatibility layer: Import domain functions from new modular structure
-from carrer.domain.enums import (
-    PRIVACY_LEVELS as SUPPORTED_PRIVACY_LEVELS,
-)
-from carrer.domain.enums import (
-    SOURCE_ENTITY_TYPES as SUPPORTED_SOURCE_ENTITY_TYPES,
-)
 from carrer.domain.hashing import stable_hash
 from carrer.domain.privacy import most_restrictive
 from carrer.domain.timestamps import now
+from carrer.ingestion import normalization as ingestion_normalization
+from carrer.ingestion import service as ingestion_service
+from carrer.ingestion import validation as ingestion_validation
 
 # Import graph storage from new storage module
 from carrer.storage.json_graph_storage import JsonGraphStorage
@@ -23,22 +19,12 @@ from carrer.storage.json_graph_storage import JsonGraphStorage
 # GraphStore is now an alias to JsonGraphStorage
 GraphStore = JsonGraphStorage
 
-
-def node(node_id: str, node_type: str, **properties: object) -> dict:
-    return {"id": node_id, "node_type": node_type, "created_at": now(), "properties": properties}
-
-
-def load_fixture(path: str | Path) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def load_source_input(path: str | Path) -> dict:
-    data = load_fixture(path)
-    if data.get("format") == "source_export_v1":
-        validate_source_export_v1(data)
-        return normalize_source_export(data)
-    return data
-
+load_fixture = ingestion_service.load_fixture
+ingest_fixture = ingestion_service.ingest_fixture
+evidence_type_for = ingestion_service.evidence_type_for
+validate_source_export_v1 = ingestion_validation.validate_source_export_v1
+source_entity_type = ingestion_normalization.source_entity_type
+normalize_technology_list = ingestion_normalization.normalize_technology_list
 
 TECHNOLOGY_KEYWORDS = {
     # Programming Languages
@@ -101,6 +87,7 @@ TECHNOLOGY_KEYWORDS = {
     "mockito": "Mockito",
     "selenium": "Selenium",
 }
+
 DEFAULT_DOMAIN_BY_ENTITY_TYPE = {
     "work_item": "work item delivery",
     "pull_request": "pull request delivery",
@@ -111,6 +98,113 @@ DEFAULT_DOMAIN_BY_ENTITY_TYPE = {
     "job_description": "job market requirements",
     "branch": "branch management",
 }
+
+
+def infer_business_domain_from_payload(payload: dict[str, object]) -> str | None:
+    """Infer business domain from work item title and description patterns."""
+    domain_patterns = [
+        (r"\b(pedidos?|orders?)\b", "Order Management & Processing"),
+        (r"\b(vendas?|sales?|revenue)\b", "Sales & Revenue Operations"),
+        (r"\b(concilia[çc][aã]o|reconciliation|settlement)\b", "Financial Reconciliation & Settlement"),
+        (r"\b(baixas?|settlement)\b", "Financial Settlement Operations"),
+        (r"\b(frete|shipping|log[ií]stica|logistics)\b", "Shipping & Logistics Management"),
+        (r"\b(estoque|inventory|stock)\b", "Inventory Management"),
+        (r"\b(importa[çc][aã]o|import|etl)\b", "Data Import & ETL Operations"),
+        (r"\b(expans[aã]o|expansion|growth)\b", "Business Expansion & Growth"),
+        (r"\b(integra[çc][aã]o|integration)\b", "System Integration & Connectivity"),
+        (r"\b(webhook|callback|event)\b", "Event-Driven Architecture"),
+        (r"\b(api|endpoint|rest)\b", "API Design & Development"),
+        (r"\b(migra[çc][aã]o|migration)\b", "Data Migration & System Transfer"),
+        (r"\b(onboarding|setup|configura[çc][aã]o)\b", "Integration Onboarding & Setup"),
+        (r"\b(monitoramento|monitoring|observability)\b", "System Observability & Monitoring"),
+        (r"\b(relat[óo]rio|report|dashboard)\b", "Reporting & Analytics"),
+    ]
+
+    title = str(payload.get("title", "")).lower()
+    description = str(payload.get("description", "")).lower()
+    combined_text = title + " " + description
+
+    for pattern, domain in domain_patterns:
+        if re.search(pattern, combined_text, re.IGNORECASE):
+            return domain
+
+    return None
+
+
+def infer_technologies_from_payload(payload: dict[str, object]) -> list[str]:
+    text_values: list[str] = []
+    for key in (
+        "title",
+        "message",
+        "summary",
+        "description",
+        "discussion",
+        "acceptance_criteria",
+        "source_branch",
+        "target_branch",
+        "branch",
+        "repository",
+    ):
+        value = payload.get(key)
+        if isinstance(value, str):
+            text_values.append(value)
+        elif isinstance(value, list):
+            text_values.extend(str(item) for item in value)
+
+    tags = payload.get("tags")
+    if isinstance(tags, list):
+        text_values.extend(str(tag) for tag in tags)
+
+    text = " ".join(text_values).lower()
+    return sorted({label for needle, label in TECHNOLOGY_KEYWORDS.items() if needle in text})
+
+
+def normalize_source_payload(entity_type: str, payload: dict[str, object]) -> dict[str, object]:
+    normalized = ingestion_normalization.normalize_source_payload(entity_type, payload)
+
+    technologies = normalize_technology_list(normalized.get("technologies"))
+    inferred = infer_technologies_from_payload(normalized)
+    for technology in inferred:
+        if not any(technology.lower() == current.lower() for current in technologies):
+            technologies.append(technology)
+    normalized["technologies"] = technologies
+
+    current_domain = str(normalized.get("domain", "")).strip()
+    if not current_domain or current_domain.startswith("kon br produto"):
+        inferred_domain = infer_business_domain_from_payload(normalized)
+        if inferred_domain:
+            normalized["domain"] = inferred_domain
+        elif not current_domain:
+            normalized["domain"] = DEFAULT_DOMAIN_BY_ENTITY_TYPE.get(entity_type, "engineering activity")
+
+    return normalized
+
+
+def normalize_source_export(export: dict[str, object]) -> dict[str, object]:
+    normalized_export = ingestion_normalization.normalize_source_export(export)
+    records = []
+    for record in normalized_export["records"]:
+        normalized_record = dict(record)
+        normalized_record["payload"] = normalize_source_payload(
+            str(normalized_record["type"]),
+            normalized_record["payload"],
+        )
+        records.append(normalized_record)
+    normalized_export["records"] = records
+    return normalized_export
+
+
+def load_source_input(path: str | Path) -> dict[str, object]:
+    data = load_fixture(path)
+    if data.get("format") == "source_export_v1":
+        validate_source_export_v1(data)
+        return normalize_source_export(data)
+    return data
+
+
+def node(node_id: str, node_type: str, **properties: object) -> dict:
+    return {"id": node_id, "node_type": node_type, "created_at": now(), "properties": properties}
+
 
 # Domain enrichment mappings: technical domain -> professional domain
 DOMAIN_ENRICHMENT = {
@@ -477,254 +571,6 @@ def enrich_knowledge_statement(
 
     # Default: return base statement
     return base_statement
-
-
-def validate_source_export_v1(export: dict) -> None:
-    errors: list[str] = []
-    required_top_level = ("captured_at", "engineer", "source", "records")
-    for key in required_top_level:
-        if key not in export:
-            errors.append(f"missing top-level field: {key}")
-
-    engineer = export.get("engineer")
-    if not isinstance(engineer, dict):
-        errors.append("engineer must be an object")
-    else:
-        for key in ("id", "display_name", "primary_email_hash"):
-            if key not in engineer:
-                errors.append(f"missing engineer field: {key}")
-
-    source = export.get("source")
-    if not isinstance(source, dict):
-        errors.append("source must be an object")
-    else:
-        for key in ("id", "type", "name", "visibility"):
-            if key not in source:
-                errors.append(f"missing source field: {key}")
-
-    records = export.get("records")
-    if not isinstance(records, list):
-        errors.append("records must be a list")
-        records = []
-    for index, record in enumerate(records):
-        if not isinstance(record, dict):
-            errors.append(f"records[{index}] must be an object")
-            continue
-        has_type = "source_entity_type" in record or "type" in record
-        if not has_type:
-            errors.append(f"records[{index}] missing field: source_entity_type")
-        for key in ("external_id", "occurred_at", "payload"):
-            if key not in record:
-                errors.append(f"records[{index}] missing field: {key}")
-        source_entity_type = record.get("source_entity_type", record.get("type"))
-        if source_entity_type and source_entity_type not in SUPPORTED_SOURCE_ENTITY_TYPES:
-            errors.append(f"records[{index}] has unsupported source_entity_type: {source_entity_type}")
-        privacy_level = record.get("privacy_level", record.get("visibility", "artifact_safe"))
-        if privacy_level not in SUPPORTED_PRIVACY_LEVELS:
-            errors.append(f"records[{index}] has unsupported privacy_level: {privacy_level}")
-        payload = record.get("payload")
-        if payload is not None and not isinstance(payload, dict):
-            errors.append(f"records[{index}].payload must be an object")
-
-    if errors:
-        raise ValueError("Invalid source_export_v1: " + "; ".join(errors))
-
-
-def normalize_source_export(export: dict) -> dict:
-    return {
-        "captured_at": export["captured_at"],
-        "engineer": export["engineer"],
-        "source": export["source"],
-        "records": [
-            {
-                "type": source_entity_type(record),
-                "external_id": record["external_id"],
-                "occurred_at": record["occurred_at"],
-                "privacy_level": record.get("privacy_level", record.get("visibility", "artifact_safe")),
-                "source": record.get("source", export["source"]),
-                "payload": normalize_source_payload(source_entity_type(record), record["payload"]),
-            }
-            for record in export["records"]
-        ],
-    }
-
-
-def source_entity_type(record: dict) -> str:
-    return record["source_entity_type"] if "source_entity_type" in record else record["type"]
-
-
-def infer_business_domain_from_payload(payload: dict) -> str | None:
-    """Infer business domain from work item title and description patterns"""
-    import re
-
-    # Business domain patterns with priority (specific → general)
-    domain_patterns = [
-        # E-commerce & Marketplace (highest priority for business context)
-        (r"\b(pedidos?|orders?)\b", "Order Management & Processing"),
-        (r"\b(vendas?|sales?|revenue)\b", "Sales & Revenue Operations"),
-        (r"\b(concilia[çc][aã]o|reconciliation|settlement)\b", "Financial Reconciliation & Settlement"),
-        (r"\b(baixas?|settlement)\b", "Financial Settlement Operations"),
-        (r"\b(frete|shipping|log[ií]stica|logistics)\b", "Shipping & Logistics Management"),
-        (r"\b(estoque|inventory|stock)\b", "Inventory Management"),
-        (r"\b(importa[çc][aã]o|import|etl)\b", "Data Import & ETL Operations"),
-        (r"\b(expans[aã]o|expansion|growth)\b", "Business Expansion & Growth"),
-        (r"\b(integra[çc][aã]o|integration)\b", "System Integration & Connectivity"),
-        (r"\b(webhook|callback|event)\b", "Event-Driven Architecture"),
-        (r"\b(api|endpoint|rest)\b", "API Design & Development"),
-        (r"\b(migra[çc][aã]o|migration)\b", "Data Migration & System Transfer"),
-        (r"\b(onboarding|setup|configura[çc][aã]o)\b", "Integration Onboarding & Setup"),
-        (r"\b(monitoramento|monitoring|observability)\b", "System Observability & Monitoring"),
-        (r"\b(relat[óo]rio|report|dashboard)\b", "Reporting & Analytics"),
-    ]
-
-    # Extract text from title and description
-    title = payload.get("title", "").lower()
-    description = payload.get("description", "").lower()
-    combined_text = title + " " + description
-
-    # Try to match business domain patterns (first match wins due to priority order)
-    for pattern, domain in domain_patterns:
-        if re.search(pattern, combined_text, re.IGNORECASE):
-            return domain
-
-    return None
-
-
-def normalize_source_payload(entity_type: str, payload: dict) -> dict:
-    normalized = dict(payload)
-    technologies = normalize_technology_list(normalized.get("technologies"))
-    inferred = infer_technologies_from_payload(normalized)
-    for technology in inferred:
-        if not any(technology.lower() == current.lower() for current in technologies):
-            technologies.append(technology)
-    normalized["technologies"] = technologies
-
-    # Infer business domain if missing or generic
-    current_domain = str(normalized.get("domain", "")).strip()
-    if not current_domain or current_domain.startswith("kon br produto"):
-        # Try to infer specific business domain
-        inferred_domain = infer_business_domain_from_payload(normalized)
-        if inferred_domain:
-            normalized["domain"] = inferred_domain
-        elif not current_domain:
-            # Fallback to default by entity type
-            normalized["domain"] = DEFAULT_DOMAIN_BY_ENTITY_TYPE.get(entity_type, "engineering activity")
-
-    return normalized
-
-
-def normalize_technology_list(raw_value: object) -> list[str]:
-    if not isinstance(raw_value, list):
-        return []
-    normalized = []
-    for item in raw_value:
-        value = str(item).strip()
-        if value and not any(value.lower() == current.lower() for current in normalized):
-            normalized.append(value)
-    return normalized
-
-
-def infer_technologies_from_payload(payload: dict) -> list[str]:
-    text_values = []
-    for key in (
-        "title",
-        "message",
-        "summary",
-        "description",
-        "discussion",
-        "acceptance_criteria",
-        "source_branch",
-        "target_branch",
-        "branch",
-        "repository",
-    ):
-        value = payload.get(key)
-        if isinstance(value, str):
-            text_values.append(value)
-        elif isinstance(value, list):
-            text_values.extend(str(item) for item in value)
-    tags = payload.get("tags")
-    if isinstance(tags, list):
-        text_values.extend(str(tag) for tag in tags)
-
-    text = " ".join(text_values).lower()
-    return sorted({label for needle, label in TECHNOLOGY_KEYWORDS.items() if needle in text})
-
-
-def ingest_fixture(fixture: dict, store: GraphStore) -> dict[str, int]:
-    engineer = fixture["engineer"]
-    store.create_node(node(f"engineer:{engineer['id']}", "Engineer", **engineer))
-
-    created = reused = 0
-    evidence_by_external_id = {}
-    for record in fixture["records"]:
-        source = record.get("source", fixture["source"])
-        store.create_node(node(f"source:{source['id']}", "Source", **source))
-        store.create_node(
-            node(
-                f"identity:{engineer['id']}:{source['id']}",
-                "SourceIdentity",
-                engineer_id=engineer["id"],
-                source_id=source["id"],
-            )
-        )
-        store.create_edge(
-            "ENGINEER_HAS_IDENTITY", f"engineer:{engineer['id']}", f"identity:{engineer['id']}:{source['id']}"
-        )
-        payload_hash = stable_hash(record["payload"])
-        evidence_type = evidence_type_for(record["type"], record["payload"])
-        evidence_id = "evidence:" + stable_hash(
-            [source["id"], record["type"], record["external_id"], evidence_type, payload_hash]
-        )
-        evidence_by_external_id[record["external_id"]] = evidence_id
-        evidence = node(
-            evidence_id,
-            "EvidenceNode",
-            evidence_type=evidence_type,
-            source_id=source["id"],
-            source_entity_type=record["type"],
-            source_entity_id=record["external_id"],
-            captured_at=fixture["captured_at"],
-            occurred_at=record["occurred_at"],
-            content_hash=payload_hash,
-            privacy_level=record.get("privacy_level", "artifact_safe"),
-            metadata=record["payload"],
-        )
-        _, was_created = store.create_node(evidence)
-        created += int(was_created)
-        reused += int(not was_created)
-        store.create_edge("EVIDENCE_DESCRIBES_ENTITY", evidence_id, f"engineer:{engineer['id']}")
-
-    for record in fixture["records"]:
-        from_id = evidence_by_external_id[record["external_id"]]
-        for relation in record["payload"].get("relationships", []):
-            to_id = evidence_by_external_id.get(relation.get("external_id"))
-            if to_id:
-                store.create_edge(
-                    "EVIDENCE_RELATED_TO_EVIDENCE", from_id, to_id, source_relation_type=relation.get("type", "")
-                )
-
-    source_refs = sorted({f"source:{record.get('source', fixture['source'])['id']}" for record in fixture["records"]})
-    store.append_audit_record("ingestion_run", source_refs, "succeeded", {"created": created, "reused": reused})
-    return {"records_created": created, "records_reused": reused}
-
-
-def evidence_type_for(record_type: str, payload: dict) -> str:
-    if record_type == "work_item":
-        return "WORK_ITEM_EXISTS"
-    if record_type == "commit":
-        return "COMMIT_EXISTS"
-    if record_type in ("pull_request", "merge_request"):
-        return "MERGE_REQUEST_EXISTS"
-    if record_type == "branch":
-        return "BRANCH_EXISTS"
-    if record_type == "review_comment":
-        return "REVIEW_COMMENT_CREATED"
-    if record_type == "documentation":
-        return "DOCUMENTATION_EXISTS"
-    if record_type == "job_description":
-        return "JOB_DESCRIPTION_EXISTS"
-    return "UNKNOWN_SOURCE_RECORD"
 
 
 def infer_impact_patterns(store: GraphStore, evidence: list[dict]) -> list[dict]:
