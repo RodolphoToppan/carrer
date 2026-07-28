@@ -59,6 +59,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - isolate queries, review workflow, and orchestration
 6. **Artifact extraction**
    - isolate generators, validation, traceability, and renderers
+   - current status: artifact builders, Markdown rendering, validation, traceability, and thin service orchestration live in `src/carrer/artifacts/`
 7. **Interface adapters**
    - keep scripts/CLI/API as thin entrypoints
 ## Real Risks and Mitigations
