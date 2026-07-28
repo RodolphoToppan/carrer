@@ -1,6 +1,6 @@
 # Current State Architecture
 ## Overview
-Carrer currently runs as a local-first Python MVP centered on `src/career_intelligence_mvp.py`, with domain and storage components already extracted to `src/carrer/`.
+Carrer currently runs as a local-first Python MVP centered on `src/career_intelligence_mvp.py`, with domain, storage, ingestion, and inference components extracted to `src/carrer/`.
 Core behavior already validated in code and tests:
 - ingestion from `source_export_v1`
 - immutable evidence persistence in graph storage
@@ -22,8 +22,9 @@ External Source
 ## Core Runtime Components
 - `load_source_input` validates and normalizes `source_export_v1`
 - `ingest_fixture` creates engineer/source/identity/evidence nodes and relationship edges
-- `infer_observations` creates observation proposals from deterministic rules
-- `generate_knowledge` derives proposed knowledge from accepted observations
+- `src/carrer/inference/rules.py` contains deterministic semantic inference rules and source normalization enrichment used by legacy `source_export_v1` loading
+- `src/carrer/inference/observations.py` creates observation proposals from deterministic rules
+- `src/carrer/inference/knowledge.py` derives proposed knowledge from accepted observations
 - review functions control acceptance/rejection and privacy updates
 - artifact generators build resume, skill matrix, and additional outputs
 - `validate_artifact` and `artifact_traceability` enforce export safety and explainability
@@ -37,7 +38,8 @@ External Source
 - local execution with no mandatory external AI dependency
 - graph-based traceability from artifact claims to supporting evidence
 - modularization in progress without replacing proven MVP behavior
-- ingestion boundary extracted to `src/carrer/ingestion/` (`validation.py`, `normalization.py`, `service.py`) with legacy compatibility preserved in `career_intelligence_mvp.py`
+- ingestion remains structural in `src/carrer/ingestion/` (`validation.py`, `normalization.py`, `service.py`)
+- deterministic inference is isolated in `src/carrer/inference/` with legacy compatibility re-exports preserved in `career_intelligence_mvp.py`
 ## Known Constraints
 - monolith entrypoint still concentrates multiple responsibilities
 - several business rules remain hardcoded in deterministic maps/patterns
