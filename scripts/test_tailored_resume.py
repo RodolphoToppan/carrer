@@ -129,7 +129,7 @@ def main() -> int:
 
     # Summary
     print("=" * 80)
-    print("SPRINT 5 TAILORED RESUME VALIDATION SUMMARY")
+    print("TAILORED RESUME VALIDATION SUMMARY")
     print("=" * 80)
     for result in results:
         status_icon = "✅" if result["status"] == "PASS" else "❌" if result["status"] == "FAIL" else "⚠️"

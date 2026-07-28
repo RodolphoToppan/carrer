@@ -1,0 +1,266 @@
+{
+  "format": "source_export_v1",
+  "captured_at": "2024-03-27T12:00:00Z",
+  "engineer": {
+    "id": "engineer:char-test",
+    "display_name": "Alex Morgan",
+    "primary_email_hash": "sha256:alex.morgan.example"
+  },
+  "source": {
+    "id": "source:example-gitlab",
+    "type": "gitlab",
+    "name": "Example GitLab Instance",
+    "visibility": "internal"
+  },
+  "records": [
+    {
+      "source_entity_type": "work_item",
+      "external_id": "WI-1001",
+      "occurred_at": "2024-03-15T10:30:00Z",
+      "privacy_level": "internal",
+      "payload": {
+        "title": "Implement order processing retry logic",
+        "description": "Add retry mechanism for failed marketplace API calls to improve system reliability. System currently processes 25M orders per quarter.",
+        "state": "closed",
+        "assigned_to": "alex.morgan@example.com",
+        "tags": [
+          "backend",
+          "reliability"
+        ],
+        "area_path": "Platform\\OrderProcessing",
+        "technologies": [
+          "Python",
+          "Redis",
+          "RabbitMQ"
+        ],
+        "domain": "marketplace integration"
+      }
+    },
+    {
+      "source_entity_type": "commit",
+      "external_id": "abc123def456",
+      "occurred_at": "2024-03-16T14:20:00Z",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "sha": "abc123def456",
+        "message": "feat: Add exponential backoff for marketplace API retries",
+        "author_email": "alex.morgan@example.com",
+        "branch": "feature/retry-logic",
+        "files_changed": [
+          "src/integrations/marketplace_client.py",
+          "src/integrations/retry_policy.py",
+          "tests/test_retry_policy.py"
+        ],
+        "insertions": 145,
+        "deletions": 23,
+        "technologies": [
+          "Python"
+        ],
+        "domain": "marketplace integration"
+      }
+    },
+    {
+      "source_entity_type": "branch",
+      "external_id": "feature/retry-logic",
+      "occurred_at": "2024-03-15T09:00:00Z",
+      "privacy_level": "internal",
+      "payload": {
+        "name": "feature/retry-logic",
+        "created_by": "alex.morgan@example.com",
+        "base_branch": "main"
+      }
+    },
+    {
+      "source_entity_type": "merge_request",
+      "external_id": "MR-450",
+      "occurred_at": "2024-03-17T16:45:00Z",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Add marketplace API retry logic with exponential backoff",
+        "state": "merged",
+        "author": "alex.morgan@example.com",
+        "source_branch": "feature/retry-logic",
+        "target_branch": "main",
+        "description": "Implements configurable retry policy for marketplace integrations (Generic Marketplace, Acme Store, QuickShop). Reduces failed order processing from 0.5% to 0.05%.",
+        "merged_at": "2024-03-18T10:15:00Z",
+        "technologies": [
+          "Python",
+          "Redis"
+        ],
+        "domain": "marketplace integration"
+      }
+    },
+    {
+      "source_entity_type": "review_comment",
+      "external_id": "RC-2201",
+      "occurred_at": "2024-03-17T18:30:00Z",
+      "privacy_level": "internal",
+      "payload": {
+        "merge_request_id": "MR-450",
+        "author": "chris.reviewer@example.com",
+        "comment": "Consider adding circuit breaker pattern for repeated failures",
+        "file_path": "src/integrations/marketplace_client.py",
+        "line_number": 87
+      }
+    },
+    {
+      "source_entity_type": "documentation",
+      "external_id": "DOC-3301",
+      "occurred_at": "2024-03-19T11:00:00Z",
+      "privacy_level": "internal",
+      "payload": {
+        "title": "Marketplace Integration Architecture",
+        "path": "docs/architecture/marketplace-integration.md",
+        "content": "Overview of retry policies and error handling for marketplace API integrations.",
+        "author": "alex.morgan@example.com",
+        "technologies": [
+          "REST APIs"
+        ],
+        "domain": "system architecture"
+      }
+    },
+    {
+      "source_entity_type": "job_description",
+      "external_id": "JD-5501",
+      "occurred_at": "2024-03-20T09:00:00Z",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "title": "Senior Backend Engineer",
+        "company": "TechCorp Remote",
+        "location": "Remote - Europe",
+        "description": "We are looking for a Senior Backend Engineer with experience in distributed systems, API integrations, and high-volume transaction processing.",
+        "required_skills": [
+          "Python",
+          "PostgreSQL",
+          "RabbitMQ",
+          "Docker",
+          "Kubernetes"
+        ],
+        "preferred_skills": [
+          "Redis",
+          "Elasticsearch",
+          "Microservices"
+        ],
+        "technologies": [
+          "Python",
+          "PostgreSQL",
+          "RabbitMQ",
+          "Docker",
+          "Kubernetes",
+          "Redis",
+          "Elasticsearch"
+        ],
+        "domain": "distributed systems"
+      }
+    },
+    {
+      "source_entity_type": "work_item",
+      "external_id": "WI-1001",
+      "occurred_at": "2024-03-22T08:00:00Z",
+      "privacy_level": "internal",
+      "payload": {
+        "title": "Implement order processing retry logic",
+        "description": "Add retry mechanism for failed marketplace API calls to improve system reliability. System currently processes 25M orders per quarter.",
+        "state": "closed",
+        "assigned_to": "alex.morgan@example.com",
+        "tags": [
+          "backend",
+          "reliability"
+        ],
+        "area_path": "Platform\\OrderProcessing",
+        "technologies": [
+          "Python",
+          "Redis",
+          "RabbitMQ"
+        ],
+        "domain": "marketplace integration"
+      }
+    },
+    {
+      "source_entity_type": "commit",
+      "external_id": "abc123def456",
+      "occurred_at": "2024-03-23T11:00:00Z",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "sha": "abc123def456",
+        "message": "feat: Add exponential backoff for marketplace API retries - updated implementation",
+        "author_email": "alex.morgan@example.com",
+        "branch": "feature/retry-logic",
+        "files_changed": [
+          "src/integrations/marketplace_client.py",
+          "src/integrations/retry_policy.py",
+          "tests/test_retry_policy.py"
+        ],
+        "insertions": 156,
+        "deletions": 34,
+        "technologies": [
+          "Python"
+        ],
+        "domain": "marketplace integration"
+      }
+    },
+    {
+      "source_entity_type": "work_item",
+      "external_id": "WI-1002",
+      "occurred_at": "2024-03-24T10:00:00Z",
+      "privacy_level": "private",
+      "payload": {
+        "title": "Review API rate limiting implementation for Project Phoenix",
+        "description": "Sensitive client: Confidential Corp. Internal project codename: Phoenix. Private API endpoint: https://internal-api.company.local/v2/orders",
+        "state": "in_progress",
+        "assigned_to": "alex.morgan@example.com",
+        "tags": [
+          "confidential"
+        ],
+        "area_path": "SecretProject\\RateLimiting",
+        "technologies": [
+          "Python"
+        ],
+        "domain": "api gateway"
+      }
+    },
+    {
+      "source_entity_type": "commit",
+      "external_id": "xyz999private",
+      "occurred_at": "2024-03-25T14:00:00Z",
+      "privacy_level": "artifact_safe",
+      "payload": {
+        "sha": "xyz999private",
+        "message": "Implement circuit breaker for critical vendor API",
+        "author_email": "alex.morgan@example.com",
+        "branch": "main",
+        "files_changed": [
+          "src/integrations/circuit_breaker.py"
+        ],
+        "insertions": 89,
+        "deletions": 12,
+        "technologies": [
+          "Python"
+        ],
+        "domain": "resilience engineering",
+        "metrics": {
+          "response_time_improvement_ms": 350,
+          "error_rate_reduction_percent": 2.3
+        }
+      }
+    },
+    {
+      "source_entity_type": "commit",
+      "external_id": "num123incidental",
+      "occurred_at": "2024-03-26T09:30:00Z",
+      "privacy_level": "internal",
+      "payload": {
+        "sha": "num123incidental",
+        "message": "Update test data with sample order ID 12345",
+        "author_email": "alex.morgan@example.com",
+        "branch": "test-updates",
+        "files_changed": [
+          "tests/fixtures/sample_orders.json"
+        ],
+        "insertions": 5,
+        "deletions": 3,
+        "domain": "testing"
+      }
+    }
+  ]
+}

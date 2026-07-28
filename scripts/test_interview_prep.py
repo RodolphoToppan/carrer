@@ -99,7 +99,7 @@ def main() -> int:
         print()
 
     print("=" * 80)
-    print("SPRINT 5 INTERVIEW PREP VALIDATION")
+    print("INTERVIEW PREP VALIDATION")
     print("=" * 80)
     for result in results:
         status = "PASS" if result["status"] == "PASS" else "FAIL" if result["status"] == "FAIL" else "REVIEW"

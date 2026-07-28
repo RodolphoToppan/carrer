@@ -94,7 +94,7 @@ def main() -> int:
         print()
 
     print("=" * 80)
-    print("SPRINT 5 LEARNING ROADMAP VALIDATION")
+    print("LEARNING ROADMAP VALIDATION")
     print("=" * 80)
     for result in results:
         status = "PASS" if result["status"] == "PASS" else "FAIL" if result["status"] == "FAIL" else "REVIEW"

@@ -151,11 +151,12 @@ class JsonGraphStorage:
             result: Audit result
             metadata: Optional audit metadata (defaults to empty dict)
         """
+        created_at = now()
         self.audit_records.append(
             {
-                "id": f"audit:{stable_hash([audit_type, target_refs, result, metadata, now()])}",
+                "id": f"audit:{stable_hash([audit_type, target_refs, result, metadata, created_at])}",
                 "audit_type": audit_type,
-                "created_at": now(),
+                "created_at": created_at,
                 "actor": "system",
                 "target_refs": target_refs,
                 "result": result,

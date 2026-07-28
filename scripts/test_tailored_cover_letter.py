@@ -91,7 +91,7 @@ def main() -> int:
         print()
 
     print("=" * 80)
-    print("SPRINT 5 TAILORED COVER LETTER VALIDATION")
+    print("TAILORED COVER LETTER VALIDATION")
     print("=" * 80)
     for result in results:
         status = "PASS" if result["status"] == "PASS" else "FAIL" if result["status"] == "FAIL" else "REVIEW"

@@ -307,7 +307,7 @@ A task is only considered complete when:
 
 ## Architecture Preservation
 
-The current architecture is approved and must not be simplified or restarted without explicit instruction.
+Preserve documented invariants and do not replace or rewrite the architecture wholesale without explicit authorization. Architectural simplifications may be proposed when supported by evidence from the code, but must not be implemented outside the scope of the current task.
 
 Preserve:
 
@@ -335,7 +335,7 @@ Do not collapse or simplify this flow.
 
 **Current state is determined by code and canonical documentation, not by sprint labels.**
 
-Do not restart the project. Do not propose architectural simplifications unless explicitly asked.
+Do not restart the project.
 
 ## Further Reading
 
