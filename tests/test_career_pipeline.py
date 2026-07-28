@@ -1,14 +1,12 @@
 import importlib.util
+import json
 import unittest
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-import sys
-
-sys.path.insert(0, str(ROOT / "src"))
+from unittest.mock import patch
 
 from career_intelligence_mvp import GraphStore, warning_summary
 
+ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("career_pipeline", ROOT / "scripts" / "career_pipeline.py")
 career_pipeline = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(career_pipeline)
@@ -16,7 +14,20 @@ SPEC.loader.exec_module(career_pipeline)
 
 class CareerPipelineTest(unittest.TestCase):
     def test_summarize_export_uses_canonical_file(self):
-        summary = career_pipeline.summarize_export()
+        tmp_export = ROOT / "tmp" / "test_export.json"
+        tmp_export.parent.mkdir(parents=True, exist_ok=True)
+        fixture_data = {
+            "format": "source_export_v1",
+            "records": [
+                {"source_entity_type": "work_item", "title": "Test Item"},
+                {"source_entity_type": "commit", "title": "Test Commit"},
+                {"source_entity_type": "work_item", "title": "Another Item"},
+            ],
+        }
+        tmp_export.write_text(json.dumps(fixture_data), encoding="utf-8")
+
+        with patch.object(career_pipeline, "EXPORT_PATH", tmp_export):
+            summary = career_pipeline.summarize_export()
 
         self.assertIn("records:", summary)
         self.assertIn("work_item", summary)

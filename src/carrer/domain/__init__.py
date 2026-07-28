@@ -9,7 +9,8 @@ from carrer.domain.enums import (
     PRIVACY_LEVELS,
     SOURCE_ENTITY_TYPES,
 )
-from carrer.domain.hashing import most_restrictive, stable_hash
+from carrer.domain.hashing import stable_hash
+from carrer.domain.privacy import most_restrictive
 from carrer.domain.timestamps import now
 
 __all__ = [

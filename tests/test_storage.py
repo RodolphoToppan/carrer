@@ -5,15 +5,12 @@ These tests verify storage isolation, format preservation, and contract complian
 """
 
 import json
-import sys
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from carrer.domain.hashing import stable_hash
 from carrer.storage import JsonGraphStorage
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class JsonGraphStorageTest(unittest.TestCase):

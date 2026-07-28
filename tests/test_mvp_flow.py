@@ -1,10 +1,6 @@
 import json
-import sys
 import unittest
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
 
 from career_intelligence_mvp import (
     GraphStore,
@@ -43,6 +39,8 @@ from career_intelligence_mvp import (
     validate_artifact,
     validate_source_export_v1,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def approve_all_proposed(store: GraphStore):

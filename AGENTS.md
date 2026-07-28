@@ -259,16 +259,40 @@ If the answer to any of these is "no", do not create the file.
 
 Agents have autonomy to edit files and execute commands necessary for the task.
 
-However, agents must not:
+However, agents must **never** perform the following operations without **explicit user authorization**:
 
-* publish changes to remote repositories
-* open pull requests without explicit instruction
-* send private data to external services
-* modify credentials or secrets
-* include personal information in fixtures
-* delete files without verifying references and relevance
-* perform broad rewrites outside the requested scope
-* add dependencies without demonstrated necessity
+### Prohibited Git Operations
+
+* `git add` — adding files to staging
+* `git commit` — creating commits
+* `git push` — publishing to remote
+* `git reset` — resetting branch state
+* `git checkout` — checking out files or branches
+* altering the Git staging area in any way
+* creating or switching branches
+* opening pull requests
+* publishing releases
+* publishing changes to remote repositories
+
+### Other Prohibited Actions
+
+* sending private data to external services
+* modifying credentials or secrets
+* including personal information in fixtures
+* deleting files without verifying references and relevance
+* performing broad rewrites outside the requested scope
+* adding dependencies without demonstrated necessity
+
+### Allowed Git Operations
+
+Agents may use **read-only** Git commands such as:
+
+* `git status`
+* `git diff`
+* `git log`
+* `git show`
+* `git branch` (list only)
+* `git remote -v`
 
 ## Completion Criteria
 
@@ -309,9 +333,7 @@ Do not collapse or simplify this flow.
 
 ## Current Project Context
 
-Read `PROJECT_CONTEXT.md` for detailed project history and current sprint status.
-
-The project is currently in **Sprint 4 — Job Descriptions**.
+**Current state is determined by code and canonical documentation, not by sprint labels.**
 
 Do not restart the project. Do not propose architectural simplifications unless explicitly asked.
 
@@ -322,7 +344,6 @@ Do not restart the project. Do not propose architectural simplifications unless 
 * `docs/product/glossary.md` — canonical glossary
 * `docs/development/repository-policy.md` — repository maintenance rules
 * `docs/specs/` — approved specifications
-* `PROJECT_CONTEXT.md` — project history and current status
 * `README.md` — user-facing documentation
 
 ## Final Note

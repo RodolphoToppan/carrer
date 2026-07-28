@@ -4,14 +4,10 @@ Unit tests for domain identity functions.
 Tests deterministic hashing, timestamp generation, and privacy level merging.
 """
 
-import sys
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from carrer.domain.hashing import most_restrictive, stable_hash
+from carrer.domain.hashing import stable_hash
+from carrer.domain.privacy import most_restrictive
 from carrer.domain.timestamps import now
 
 
