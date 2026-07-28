@@ -31,6 +31,9 @@ dev = [
     "mypy>=1.8",
 ]
 
+[tool.setuptools]
+py-modules = ["career_intelligence_mvp"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -66,7 +69,7 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 120
 indent-width = 4
 
@@ -91,8 +94,20 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/*.py" = ["E402"]  # Module level import not at top (requires sys.path manipulation)
-"tests/*.py" = ["E402"]    # Module level import not at top (requires sys.path manipulation)
+"scripts/career_pipeline.py" = ["E402"]
+"scripts/check_knowledge_status.py" = ["E402"]
+"scripts/collect_gitlab_user.py" = ["E402"]
+"scripts/generate_all_artifacts.py" = ["E402"]
+"scripts/import_azure_cards_csv.py" = ["E402"]
+"scripts/import_job_descriptions.py" = ["E402"]
+"scripts/mcp_collect.py" = ["E402"]
+"scripts/regenerate_artifacts_simple.py" = ["E402"]
+"scripts/review.py" = ["E402"]
+"scripts/run_mvp.py" = ["E402"]
+"scripts/test_interview_prep.py" = ["E402"]
+"scripts/test_learning_roadmap.py" = ["E402"]
+"scripts/test_tailored_cover_letter.py" = ["E402"]
+"scripts/test_tailored_resume.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -101,7 +116,7 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -112,7 +127,3 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 strict_equality = true
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false

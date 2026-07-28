@@ -118,7 +118,6 @@ Do not commit temporary files unless they have permanent operational value.
 ├── tests/                # Test code
 ├── AGENTS.md             # Canonical agent instructions
 ├── CLAUDE.md             # Claude adapter
-├── PROJECT_CONTEXT.md    # Project history and current status
 ├── README.md             # User-facing documentation
 └── .gitignore            # Git ignore rules
 ```
@@ -264,7 +263,7 @@ Every piece of information should have a single authoritative source.
 | Term definitions | `docs/product/glossary.md` |
 | Architecture specs | `docs/specs/SPEC-*.md` |
 | Agent instructions | `AGENTS.md` |
-| Project status | `PROJECT_CONTEXT.md` |
+| Architecture direction | `docs/architecture/current-state.md` + `docs/architecture/target-state.md` |
 | User guide | `README.md` |
 | Code behavior | Source code + tests |
 

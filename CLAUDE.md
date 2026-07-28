@@ -20,7 +20,6 @@ After reading `AGENTS.md`, consult these documents as needed:
 * `docs/product/glossary.md` — canonical glossary
 * `docs/development/repository-policy.md` — repository maintenance policy
 * `docs/specs/*.md` — approved architecture specifications
-* `PROJECT_CONTEXT.md` — project history and current sprint
 
 ## Key Reminders
 
