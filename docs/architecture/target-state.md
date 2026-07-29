@@ -60,6 +60,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - isolate observations, patterns, and knowledge generation
 5. **Application extraction**
    - isolate queries, review workflow, and orchestration
+   - current status: explicit contribution creation and simple contribution queries live in `src/carrer/contributions/`; they validate provenance and privacy but do not perform clustering or impact analysis
 6. **Artifact extraction**
    - isolate generators, validation, traceability, and renderers
    - current status: artifact builders, Markdown rendering, validation, traceability, and thin service orchestration live in `src/carrer/artifacts/`

@@ -24,7 +24,7 @@ Examples: implementing a feature, fixing a bug, improving performance, writing d
 
 **Architectural intent**: Contributions group evidence-backed context, actions, and outcomes so future analysis can reason from work to impact without inventing unsupported metrics.
 
-**Current implementation**: `Contribution` is now formalized as a domain contract only. The system does not automatically cluster evidence or create contribution nodes yet.
+**Current implementation**: `Contribution` is formalized as a domain contract and can be created explicitly from user-provided evidence, observation, knowledge, or source references. The creation service validates provenance and derives safe privacy from supporting nodes. The system does not automatically cluster evidence or discover contribution nodes yet.
 
 ### Outcome
 
@@ -138,7 +138,7 @@ Examples: "The engineer repeatedly modified modules related to marketplace integ
 
 The inference engine analyzes evidence nodes and generates observations and knowledge.
 
-**Current implementation**: The inference engine exists as part of the `career_intelligence_mvp.py` implementation. It performs technology detection, domain enrichment, business domain extraction, impact signal detection, and architecture pattern detection.
+**Current implementation**: The deterministic inference engine is implemented in `src/carrer/inference/`. Legacy symbols remain re-exported by `career_intelligence_mvp.py` for backward compatibility.
 
 ### Knowledge
 
