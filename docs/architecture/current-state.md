@@ -26,6 +26,7 @@ External Source
 - `src/carrer/inference/observations.py` creates observation proposals from deterministic rules
 - `src/carrer/inference/knowledge.py` derives proposed knowledge from accepted observations
 - `src/carrer/contributions/` creates explicit `Contribution` nodes from provided provenance references, without automatic discovery
+- `src/carrer/contributions/` can also return in-memory `ContributionCandidate` suggestions by deterministic structural clustering of existing evidence nodes and evidence relationship edges
 - review functions control acceptance/rejection and privacy updates
 - `src/carrer/artifacts/` builds professional artifacts, renders Markdown, validates warnings, and preserves traceability
 - legacy artifact symbols remain re-exported by `career_intelligence_mvp.py` for scripts and tests
@@ -37,6 +38,7 @@ External Source
 - canonical domain contracts are pure dict/JSON-compatible helpers in `src/carrer/domain/`
 - `EvidenceNode`, `ObservationNode`, `KnowledgeNode`, and `ProfessionalArtifact` preserve the current persisted shapes
 - `Contribution` is a domain contract with explicit application-level creation and persistence; automatic creation, clustering, and Work-to-Impact analysis are not wired into the pipeline
+- `ContributionCandidate` is a revisable suggestion contract only; candidates are not graph nodes, are not persisted automatically, and promotion to `Contribution` remains an explicit future human action
 - `CareerClaim` remains a domain contract only; no creation or persistence is wired into the pipeline
 ## Architectural Characteristics
 - deterministic core behavior for ingestion/normalization/persistence
@@ -51,7 +53,7 @@ External Source
 - several business rules remain hardcoded in deterministic maps/patterns
 - modular extraction is incomplete and still depends on compatibility imports
 - artifact generators still consume accepted knowledge directly; `CareerClaim` consumption is a future phase
-- contribution discovery, clustering, Work-to-Impact analysis, impact scoring, and automatic `CareerClaim` generation are not implemented
+- contribution candidate discovery exists only as an explicit read-only query; automatic contribution creation, Work-to-Impact analysis, impact scoring, and automatic `CareerClaim` generation are not implemented
 ## Preservation Rules
 Any refactor must preserve:
 - Evidence -> Observation -> Knowledge -> Artifact flow

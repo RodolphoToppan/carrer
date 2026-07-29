@@ -26,6 +26,14 @@ Examples: implementing a feature, fixing a bug, improving performance, writing d
 
 **Current implementation**: `Contribution` is formalized as a domain contract and can be created explicitly from user-provided evidence, observation, knowledge, or source references. The creation service validates provenance and derives safe privacy from supporting nodes. The system does not automatically cluster evidence or discover contribution nodes yet.
 
+### ContributionCandidate
+
+A contribution candidate is a deterministic, revisable suggestion that groups evidence nodes which likely describe the same unit of work.
+
+**Architectural intent**: Candidates help a human review structural groupings before explicitly creating a `Contribution`.
+
+**Current implementation**: `ContributionCandidate` is a pure JSON-serializable contract returned in memory by deterministic clustering over explicit evidence relationships, shared structural identifiers, and compatible branch context. Candidates are not persisted automatically, do not call `create_contribution`, do not run Work-to-Impact analysis, and do not use AI, embeddings, or semantic similarity.
+
 ### Outcome
 
 An outcome is a result produced by a contribution.

@@ -60,7 +60,8 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - isolate observations, patterns, and knowledge generation
 5. **Application extraction**
    - isolate queries, review workflow, and orchestration
-   - current status: explicit contribution creation and simple contribution queries live in `src/carrer/contributions/`; they validate provenance and privacy but do not perform clustering or impact analysis
+   - current status: explicit contribution creation and simple contribution queries live in `src/carrer/contributions/`; they validate provenance and privacy
+   - current status: deterministic `ContributionCandidate` clustering is available as an explicit read-only query over evidence relationships and structural keys; candidates are not persisted automatically, promotion to `Contribution` remains explicit, and no impact analysis, semantic similarity, embeddings, or AI are used
 6. **Artifact extraction**
    - isolate generators, validation, traceability, and renderers
    - current status: artifact builders, Markdown rendering, validation, traceability, and thin service orchestration live in `src/carrer/artifacts/`
@@ -82,7 +83,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
 - Preserve behavior of privacy filtering and evidence immutability
 - Maintain compatibility imports from `career_intelligence_mvp.py` while extraction progresses
 - Keep connectors outside ingestion core; they produce `source_export_v1` and consume only public ingestion APIs
-- Add contribution clustering, Work-to-Impact, impact analysis, and claim generation only as later pipeline phases
+- Add automatic pipeline phases for contribution promotion, Work-to-Impact, impact analysis, and claim generation only as later explicit steps
 ## Completion Criteria
 Extraction work is complete when:
 - full test suite is green
