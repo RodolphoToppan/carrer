@@ -34,6 +34,14 @@ A contribution candidate is a deterministic, revisable suggestion that groups ev
 
 **Current implementation**: `ContributionCandidate` is a pure JSON-serializable contract returned in memory by deterministic clustering over explicit evidence relationships, shared structural identifiers, and compatible branch context. Candidates are not persisted automatically and do not call `create_contribution` during discovery. A candidate can be promoted only through an explicit review operation that validates the candidate, rechecks evidence nodes, preserves evidence references, applies controlled overrides, calls `create_contribution`, and records audit metadata. Explicit rejection records only audit. Candidate review does not run Work-to-Impact analysis, generate `CareerClaim`, or use AI, embeddings, or semantic similarity.
 
+### ContributionAnalysis
+
+A contribution analysis is a deterministic, read-only, reviewable reading of one persisted `Contribution`.
+
+It revalidates explicit contribution evidence, extracts structural context, factual actions, explicit outcomes, and impact signals, and returns a JSON-serializable in-memory contract. It does not persist graph nodes, create audit records, update the `Contribution`, generate `CareerClaim`, run artifacts, use LLMs, embeddings, semantic similarity, or estimate metrics.
+
+Impact signals are not confirmed impact. Metrics are included only when a structured source field provides an explicit numeric value and an explicit or semantically unambiguous unit. The analysis does not calculate percentages, normalize units, convert units, round values, or infer impact from free text.
+
 ### Outcome
 
 An outcome is a result produced by a contribution.

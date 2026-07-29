@@ -63,6 +63,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - current status: explicit contribution creation and simple contribution queries live in `src/carrer/contributions/`; they validate provenance and privacy
    - current status: deterministic `ContributionCandidate` clustering is available as an explicit read-only query over evidence relationships and structural keys; candidates are not persisted automatically, promotion to `Contribution` requires explicit human review, and rejection records only audit
    - current status: candidate review validates the candidate and current evidence refs, preserves traceability through `Contribution` evidence edges and candidate audit metadata, and does not run impact analysis, semantic similarity, embeddings, AI, Work-to-Impact, artifact generation, or `CareerClaim` generation
+   - current status: deterministic `ContributionAnalysis` is available as an explicit read-only in-memory query over one persisted `Contribution` and its explicit evidence refs; it extracts structural context, factual actions, explicit outcomes, and impact signals without persistence, pipeline execution, `CareerClaim` generation, metric calculation, unit conversion, LLMs, embeddings, or semantic matching
 6. **Artifact extraction**
    - isolate generators, validation, traceability, and renderers
    - current status: artifact builders, Markdown rendering, validation, traceability, and thin service orchestration live in `src/carrer/artifacts/`
