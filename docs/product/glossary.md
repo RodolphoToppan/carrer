@@ -18,13 +18,13 @@ Examples: committing code, opening a merge request, reviewing a pull request, cr
 
 ### Contribution
 
-A contribution is a meaningful piece of work that produced a result.
+A contribution is a coherent unit of professional work or responsibility supported by evidence, observations, knowledge, or source references.
 
 Examples: implementing a feature, fixing a bug, improving performance, writing documentation, making an architectural decision.
 
-**Architectural intent**: Contributions are derived from activities and evidence through inference.
+**Architectural intent**: Contributions group evidence-backed context, actions, and outcomes so future analysis can reason from work to impact without inventing unsupported metrics.
 
-**Current implementation**: Contributions are not yet explicitly modeled. The system currently infers observations and knowledge, which conceptually include contributions.
+**Current implementation**: `Contribution` is now formalized as a domain contract only. The system does not automatically cluster evidence or create contribution nodes yet.
 
 ### Outcome
 
@@ -68,7 +68,7 @@ Examples:
 
 **Architectural intent**: Career claims are the bridge between knowledge and artifacts. They are concrete statements derived from accepted knowledge and ready for inclusion in resumes, LinkedIn profiles, STAR stories, etc.
 
-**Current implementation**: Career claims are not yet a distinct entity. Artifact generators currently produce statements directly from knowledge nodes.
+**Current implementation**: `CareerClaim` is now formalized as a domain contract only. Artifact generators still produce statements directly from accepted knowledge nodes and do not consume career claims yet.
 
 ### Artifact
 
@@ -112,7 +112,7 @@ Examples: a commit exists, a merge request was opened, a work item was assigned,
 
 **Architectural intent**: Evidence nodes are immutable after creation and stored in the evidence graph.
 
-**Current implementation**: Evidence nodes are represented as `EvidenceNode` entities. Immutability is enforced by raising an error if an update is attempted.
+**Current implementation**: Evidence nodes are represented as `EvidenceNode` entities with deterministic IDs and `content_hash`. Immutability is enforced by raising an error if an update is attempted.
 
 ### Evidence Graph
 
@@ -132,7 +132,7 @@ Examples: "The engineer repeatedly modified modules related to marketplace integ
 
 **Architectural intent**: Observations are inferred patterns that bridge evidence and knowledge.
 
-**Current implementation**: Observations are generated during the inference phase and used to create knowledge nodes. They are not yet stored as distinct entities.
+**Current implementation**: Observations are generated as `ObservationNode` records during inference. They require supporting evidence references, confidence, status, and privacy.
 
 ### Inference Engine
 
@@ -148,7 +148,7 @@ Examples: "The engineer has practical experience with marketplace integrations",
 
 **Architectural intent**: Knowledge nodes are versioned, regenerable, and traceable to evidence.
 
-**Current implementation**: Knowledge nodes exist as `TechnologyKnowledge`, `DomainKnowledge`, `ImpactKnowledge`, `ArchitectureKnowledge`, and `BusinessKnowledge` entities. They include privacy levels and evidence references.
+**Current implementation**: Knowledge nodes exist as `KnowledgeNode` records with typed properties such as `TECHNOLOGY_EXPERIENCE`, `DOMAIN_EXPERIENCE`, `IMPACT_EXPERIENCE`, `ARCHITECTURE_EXPERIENCE`, and `BUSINESS_VALUE_EXPERIENCE`. They include status, confidence, privacy, observation references, and evidence references.
 
 ### Knowledge Graph
 

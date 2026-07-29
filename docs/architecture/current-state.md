@@ -33,6 +33,9 @@ External Source
 - persistence contract: JSON graph with `nodes`, `edges`, `audit_records`
 - privacy boundaries: `private`, `internal`, `artifact_safe`, `exported`
 - evidence immutability is enforced by storage layer
+- canonical domain contracts are pure dict/JSON-compatible helpers in `src/carrer/domain/`
+- `EvidenceNode`, `ObservationNode`, `KnowledgeNode`, and `ProfessionalArtifact` preserve the current persisted shapes
+- `Contribution` and `CareerClaim` are domain contracts only; no automatic creation or persistence is wired into the pipeline
 ## Architectural Characteristics
 - deterministic core behavior for ingestion/normalization/persistence
 - local execution with no mandatory external AI dependency
@@ -45,6 +48,8 @@ External Source
 - monolith entrypoint still owns legacy review/orchestration compatibility
 - several business rules remain hardcoded in deterministic maps/patterns
 - modular extraction is incomplete and still depends on compatibility imports
+- artifact generators still consume accepted knowledge directly; `CareerClaim` consumption is a future phase
+- contribution discovery, clustering, Work-to-Impact analysis, and impact scoring are not implemented
 ## Preservation Rules
 Any refactor must preserve:
 - Evidence -> Observation -> Knowledge -> Artifact flow

@@ -13,6 +13,8 @@ Flow invariant:
 Evidence (immutable)
 -> Observation (inferred)
 -> Knowledge (versioned, accepted)
+-> Contribution (evidence-backed work unit)
+-> CareerClaim (communicable claim)
 -> Artifact (generated)
 ```
 ## Target Module Boundaries
@@ -48,7 +50,8 @@ Rules:
 ## Macro Extraction Sequence (Consolidated)
 This sequence consolidates the stable guidance from the previous extraction mapping document.
 1. **Domain foundation**
-   - keep only active contracts and identity/time helpers in `domain`
+   - keep only active contracts and identity/time/privacy/reference helpers in `domain`
+   - define `Contribution` and `CareerClaim` as contracts before automatic generation exists
 2. **Contracts**
    - define storage and input schemas/protocols in `ports`
 3. **Infrastructure extraction**
@@ -60,6 +63,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
 6. **Artifact extraction**
    - isolate generators, validation, traceability, and renderers
    - current status: artifact builders, Markdown rendering, validation, traceability, and thin service orchestration live in `src/carrer/artifacts/`
+   - future status: artifacts consume accepted `CareerClaim` records instead of generating artifact text directly from knowledge
 7. **Interface adapters**
    - keep scripts/CLI/API as thin entrypoints
 ## Real Risks and Mitigations
@@ -77,6 +81,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
 - Preserve behavior of privacy filtering and evidence immutability
 - Maintain compatibility imports from `career_intelligence_mvp.py` while extraction progresses
 - Keep connectors outside ingestion core; they produce `source_export_v1` and consume only public ingestion APIs
+- Add contribution clustering, Work-to-Impact, impact analysis, and claim generation only as later pipeline phases
 ## Completion Criteria
 Extraction work is complete when:
 - full test suite is green
