@@ -24,7 +24,7 @@ Examples: implementing a feature, fixing a bug, improving performance, writing d
 
 **Architectural intent**: Contributions group evidence-backed context, actions, and outcomes so future analysis can reason from work to impact without inventing unsupported metrics.
 
-**Current implementation**: `Contribution` is formalized as a domain contract and can be created explicitly from user-provided evidence, observation, knowledge, or source references. The creation service validates provenance and derives safe privacy from supporting nodes. The system does not automatically cluster evidence or discover contribution nodes yet.
+**Current implementation**: `Contribution` is formalized as a domain contract and can be created explicitly from user-provided evidence, observation, knowledge, source references, or by explicit human promotion of a validated `ContributionCandidate`. The creation service validates provenance and derives safe privacy from supporting nodes. The system does not automatically create contributions from clustering.
 
 ### ContributionCandidate
 
@@ -32,7 +32,7 @@ A contribution candidate is a deterministic, revisable suggestion that groups ev
 
 **Architectural intent**: Candidates help a human review structural groupings before explicitly creating a `Contribution`.
 
-**Current implementation**: `ContributionCandidate` is a pure JSON-serializable contract returned in memory by deterministic clustering over explicit evidence relationships, shared structural identifiers, and compatible branch context. Candidates are not persisted automatically, do not call `create_contribution`, do not run Work-to-Impact analysis, and do not use AI, embeddings, or semantic similarity.
+**Current implementation**: `ContributionCandidate` is a pure JSON-serializable contract returned in memory by deterministic clustering over explicit evidence relationships, shared structural identifiers, and compatible branch context. Candidates are not persisted automatically and do not call `create_contribution` during discovery. A candidate can be promoted only through an explicit review operation that validates the candidate, rechecks evidence nodes, preserves evidence references, applies controlled overrides, calls `create_contribution`, and records audit metadata. Explicit rejection records only audit. Candidate review does not run Work-to-Impact analysis, generate `CareerClaim`, or use AI, embeddings, or semantic similarity.
 
 ### Outcome
 

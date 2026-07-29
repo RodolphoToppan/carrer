@@ -83,9 +83,7 @@ def test_explicit_edge_forms_candidate_and_missing_edge_endpoint_is_ignored() ->
     )
 
     assert len(candidates) == 1
-    assert candidates[0]["evidence_refs"] == sorted(
-        [work["id"], commit["id"]]
-    )
+    assert candidates[0]["evidence_refs"] == sorted([work["id"], commit["id"]])
     assert candidates[0]["confidence"] == "high"
     assert candidates[0]["reasons"] == [
         "connected_component",
@@ -109,9 +107,7 @@ def test_explicit_component_is_transitive_and_edge_direction_does_not_change_ide
 
     assert len(forward) == 1
     assert forward == backward
-    assert forward[0]["evidence_refs"] == sorted(
-        [work["id"], commit["id"], mr["id"]]
-    )
+    assert forward[0]["evidence_refs"] == sorted([work["id"], commit["id"], mr["id"]])
 
 
 def test_two_independent_components_stay_separate_and_sorted() -> None:
@@ -130,10 +126,7 @@ def test_two_independent_components_stay_separate_and_sorted() -> None:
 
     assert len(candidates) == 2
     assert candidates == sorted(candidates, key=lambda item: item["id"])
-    assert {
-        tuple(item["evidence_refs"])
-        for item in candidates
-    } == {
+    assert {tuple(item["evidence_refs"]) for item in candidates} == {
         tuple(sorted([first["id"], first_commit["id"]])),
         tuple(sorted([second["id"], second_commit["id"]])),
     }
@@ -146,19 +139,12 @@ def test_shared_structural_ids_group_but_same_title_does_not() -> None:
 
     candidates = cluster_evidence([unrelated, updated, first], [])
 
-    grouped = [
-        item
-        for item in candidates
-        if item["evidence_refs"] == sorted([first["id"], updated["id"]])
-    ]
+    grouped = [item for item in candidates if item["evidence_refs"] == sorted([first["id"], updated["id"]])]
 
     assert len(grouped) == 1
     assert grouped[0]["confidence"] == "medium"
     assert "shared_structural_entity_id" in grouped[0]["reasons"]
-    assert any(
-        item["evidence_refs"] == [unrelated["id"]]
-        for item in candidates
-    )
+    assert any(item["evidence_refs"] == [unrelated["id"]] for item in candidates)
 
 
 def test_branch_groups_only_with_compatible_source_and_repository() -> None:
@@ -191,14 +177,8 @@ def test_branch_groups_only_with_compatible_source_and_repository() -> None:
 
     candidates = cluster_evidence([other_repo, mr, commit], [])
 
-    assert any(
-        item["evidence_refs"] == sorted([commit["id"], mr["id"]])
-        for item in candidates
-    )
-    assert any(
-        item["evidence_refs"] == [other_repo["id"]]
-        for item in candidates
-    )
+    assert any(item["evidence_refs"] == sorted([commit["id"], mr["id"]]) for item in candidates)
+    assert any(item["evidence_refs"] == [other_repo["id"]] for item in candidates)
 
 
 def test_same_branch_without_repository_or_project_does_not_group() -> None:
@@ -218,9 +198,7 @@ def test_same_branch_without_repository_or_project_does_not_group() -> None:
 
     assert len(candidates) == 1
     assert candidates[0]["evidence_refs"] == [mr["id"]]
-    assert candidates[0]["reasons"] == [
-        "isolated_allowed_entity_type"
-    ]
+    assert candidates[0]["reasons"] == ["isolated_allowed_entity_type"]
 
 
 def test_same_repository_without_branch_or_relation_does_not_group() -> None:
@@ -239,10 +217,7 @@ def test_same_repository_without_branch_or_relation_does_not_group() -> None:
 
     candidates = cluster_evidence([first, second], [])
 
-    assert {
-        tuple(item["evidence_refs"])
-        for item in candidates
-    } == {
+    assert {tuple(item["evidence_refs"]) for item in candidates} == {
         (first["id"],),
         (second["id"],),
     }
@@ -333,9 +308,7 @@ def test_confidence_rules_are_explainable() -> None:
         "explicit_evidence_relationship",
     ]
     assert "shared_structural_entity_id" in structural["reasons"]
-    assert isolated["reasons"] == [
-        "isolated_allowed_entity_type"
-    ]
+    assert isolated["reasons"] == ["isolated_allowed_entity_type"]
 
 
 def test_dates_are_derived_from_occurred_at_only_and_input_order_independent() -> None:
@@ -375,11 +348,7 @@ def test_dates_are_derived_from_occurred_at_only_and_input_order_independent() -
 
     assert candidate["started_at"] == "2026-01-01T00:00:00Z"
     assert candidate["ended_at"] == "2026-01-03T00:00:00Z"
-    assert (
-        one_date["started_at"]
-        == one_date["ended_at"]
-        == "2026-01-01T00:00:00Z"
-    )
+    assert one_date["started_at"] == one_date["ended_at"] == "2026-01-01T00:00:00Z"
     assert no_dates["started_at"] is None
     assert no_dates["ended_at"] is None
 
@@ -547,10 +516,7 @@ def test_title_priority_and_candidate_type_are_structural() -> None:
     )
 
     assert cluster_evidence([mr], [])[0]["title"] == "MR title"
-    assert (
-        cluster_evidence([docs], [])[0]["candidate_type"]
-        == "documentation"
-    )
+    assert cluster_evidence([docs], [])[0]["candidate_type"] == "documentation"
 
     candidate = cluster_evidence(
         [mr, work, docs],
@@ -591,9 +557,7 @@ def test_deterministic_json_lists_and_no_input_mutation() -> None:
         second,
         sort_keys=True,
     )
-    assert first[0]["evidence_refs"] == sorted(
-        first[0]["evidence_refs"]
-    )
+    assert first[0]["evidence_refs"] == sorted(first[0]["evidence_refs"])
     assert first[0]["reasons"] == sorted(first[0]["reasons"])
     assert first[0]["signals"] == sorted(first[0]["signals"])
     assert nodes == before_nodes
@@ -628,9 +592,7 @@ def test_find_candidates_reads_store_without_persisting_contributions_or_audit(
         *_args: object,
         **_kwargs: object,
     ) -> None:
-        raise AssertionError(
-            "create_contribution must not be called"
-        )
+        raise AssertionError("create_contribution must not be called")
 
     monkeypatch.setattr(
         clustering,
@@ -652,12 +614,7 @@ def test_find_candidates_reads_store_without_persisting_contributions_or_audit(
 def test_pipeline_legacy_remains_without_candidate_side_effects() -> None:
     from career_intelligence_mvp import run_pipeline
 
-    store, _ = run_pipeline(
-        "tests/fixtures/characterization_source_export.json"
-    )
+    store, _ = run_pipeline("tests/fixtures/characterization_source_export.json")
 
     assert store.nodes_by_type("Contribution") == []
-    assert all(
-        node["node_type"] != "ContributionCandidate"
-        for node in store.nodes.values()
-    )
+    assert all(node["node_type"] != "ContributionCandidate" for node in store.nodes.values())

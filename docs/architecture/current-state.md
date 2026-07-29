@@ -25,7 +25,7 @@ External Source
 - `src/carrer/inference/rules.py` contains deterministic semantic inference rules and source normalization enrichment used by legacy `source_export_v1` loading
 - `src/carrer/inference/observations.py` creates observation proposals from deterministic rules
 - `src/carrer/inference/knowledge.py` derives proposed knowledge from accepted observations
-- `src/carrer/contributions/` creates explicit `Contribution` nodes from provided provenance references, without automatic discovery
+- `src/carrer/contributions/` creates explicit `Contribution` nodes from provided provenance references or from explicit human promotion of a validated in-memory `ContributionCandidate`, without automatic promotion
 - `src/carrer/contributions/` can also return in-memory `ContributionCandidate` suggestions by deterministic structural clustering of existing evidence nodes and evidence relationship edges
 - review functions control acceptance/rejection and privacy updates
 - `src/carrer/artifacts/` builds professional artifacts, renders Markdown, validates warnings, and preserves traceability
@@ -38,7 +38,7 @@ External Source
 - canonical domain contracts are pure dict/JSON-compatible helpers in `src/carrer/domain/`
 - `EvidenceNode`, `ObservationNode`, `KnowledgeNode`, and `ProfessionalArtifact` preserve the current persisted shapes
 - `Contribution` is a domain contract with explicit application-level creation and persistence; automatic creation, clustering, and Work-to-Impact analysis are not wired into the pipeline
-- `ContributionCandidate` is a revisable suggestion contract only; candidates are not graph nodes, are not persisted automatically, and promotion to `Contribution` remains an explicit future human action
+- `ContributionCandidate` is a revisable suggestion contract only; candidates are not graph nodes and are not persisted automatically. Promotion to `Contribution` is an explicit human action that validates the candidate and evidence refs, applies controlled overrides, calls the existing contribution creation service, and records audit metadata. Rejection records only audit and creates no nodes or edges.
 - `CareerClaim` remains a domain contract only; no creation or persistence is wired into the pipeline
 ## Architectural Characteristics
 - deterministic core behavior for ingestion/normalization/persistence
@@ -54,6 +54,7 @@ External Source
 - modular extraction is incomplete and still depends on compatibility imports
 - artifact generators still consume accepted knowledge directly; `CareerClaim` consumption is a future phase
 - contribution candidate discovery exists only as an explicit read-only query; automatic contribution creation, Work-to-Impact analysis, impact scoring, and automatic `CareerClaim` generation are not implemented
+- contribution candidate promotion and rejection are explicit review operations; they are not part of the pipeline and do not run context, action, outcome, impact, or artifact analysis
 ## Preservation Rules
 Any refactor must preserve:
 - Evidence -> Observation -> Knowledge -> Artifact flow
