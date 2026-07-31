@@ -92,7 +92,7 @@ Examples:
 
 **Architectural intent**: Career claims are the bridge between knowledge and artifacts. They are concrete statements derived from accepted knowledge and ready for inclusion in resumes, LinkedIn profiles, STAR stories, etc.
 
-**Current implementation**: `CareerClaim` is formalized as a domain contract and can be created only by explicit human acceptance of a current regenerated `CareerClaimCandidate`. Acceptance preserves the candidate statement exactly, keeps confidence and privacy unchanged, stores candidate identity and supporting refs as provenance, links the claim to its `ContributionAnalysis`, `Contribution`, and supporting `EvidenceNode` records, and records safe audit metadata. Rejection creates no claim node or edge. Artifact generators still produce statements directly from accepted knowledge nodes and do not consume career claims or claim candidates yet; the pipeline does not run claim review.
+**Current implementation**: `CareerClaim` is formalized as a domain contract and can be created only by explicit human acceptance of a current regenerated `CareerClaimCandidate`. Acceptance preserves the candidate statement exactly, keeps confidence and privacy unchanged, stores candidate identity and supporting refs as provenance, links the claim to its `ContributionAnalysis`, `Contribution`, and supporting `EvidenceNode` records, and records safe audit metadata. Rejection creates no claim node or edge. Accepted claims can be consumed by an explicit read-only artifact API that requires caller-selected claim IDs, revalidates persisted claims and provenance edges, applies audience/privacy rules before construction, preserves statements without rewriting, and returns in-memory resume or LinkedIn claim sections. The legacy Knowledge-based artifact generators and pipeline remain separate and do not run claim review or claim-based artifact generation automatically.
 
 ### Artifact
 
@@ -102,7 +102,7 @@ Examples: resume, LinkedIn profile section, STAR story, interview answer, skill 
 
 **Architectural intent**: Artifacts are composed of career claims and formatted for specific audiences.
 
-**Current implementation**: Artifact generators exist and produce formatted output from knowledge nodes. Artifacts reference knowledge nodes for traceability.
+**Current implementation**: Legacy artifact generators exist and produce formatted output from accepted knowledge nodes with knowledge traceability. A separate explicit claim-based artifact API can build in-memory resume and LinkedIn claim sections from accepted `CareerClaim` nodes only; it does not select claims automatically, rewrite statements, persist artifacts, publish externally, or run from the pipeline.
 
 ## Evidence Layer
 
@@ -200,7 +200,7 @@ An artifact generator produces formatted professional documents from accepted kn
 
 Examples: Resume Generator, LinkedIn Generator, STAR Story Generator, Interview Answer Generator.
 
-**Current implementation**: Artifact generators exist for Resume, LinkedIn, STAR Stories, Interview Answers, Cover Letter, Career Timeline, and Gap Analysis. They produce formatted text with embedded traceability references.
+**Current implementation**: Legacy artifact generators exist for Resume, LinkedIn, STAR Stories, Interview Answers, Cover Letter, Career Timeline, and Gap Analysis. They produce formatted text with embedded knowledge traceability references. The claim-based API currently supports only explicit in-memory `resume_claims` and `linkedin_claims` sections from accepted `CareerClaim` nodes.
 
 ## Privacy and Trust
 
