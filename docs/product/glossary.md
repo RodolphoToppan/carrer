@@ -36,9 +36,11 @@ A contribution candidate is a deterministic, revisable suggestion that groups ev
 
 ### ContributionAnalysis
 
-A contribution analysis is a deterministic, read-only, reviewable reading of one persisted `Contribution`.
+A contribution analysis is a deterministic, reviewable reading of one persisted `Contribution`.
 
-It revalidates explicit contribution evidence, extracts structural context, factual actions, explicit outcomes, and impact signals, and returns a JSON-serializable in-memory contract. It does not persist graph nodes, create audit records, update the `Contribution`, generate `CareerClaim`, run artifacts, use LLMs, embeddings, semantic similarity, or estimate metrics.
+It revalidates explicit contribution evidence, extracts structural context, factual actions, explicit outcomes, and impact signals, and returns a JSON-serializable in-memory contract. The in-memory analysis is not accepted automatically. Explicit review regenerates the current deterministic analysis before any decision, rejects tampered or stale input, and persists only accepted analyses.
+
+Accepted `ContributionAnalysis` nodes preserve edges to the reviewed `Contribution` and supporting `EvidenceNode` records. Rejection creates only audit metadata. This review flow does not update the `Contribution`, generate `CareerClaim`, run artifacts, use LLMs, embeddings, semantic similarity, or estimate metrics.
 
 Impact signals are not confirmed impact. Metrics are included only when a structured source field provides an explicit numeric value and an explicit or semantically unambiguous unit. The analysis does not calculate percentages, normalize units, convert units, round values, or infer impact from free text.
 
