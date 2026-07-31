@@ -29,6 +29,7 @@ External Source
 - `src/carrer/contributions/` can also return in-memory `ContributionCandidate` suggestions by deterministic structural clustering of existing evidence nodes and evidence relationship edges
 - `src/carrer/contributions/` can return an in-memory deterministic `ContributionAnalysis` for one persisted `Contribution`; it revalidates explicit `Contribution.properties.evidence_refs`, extracts structural context, factual actions, explicit outcomes, and explicit metric-backed impact signals, and does not persist automatically
 - `src/carrer/contributions/` supports explicit `ContributionAnalysis` acceptance and rejection. Review regenerates the current deterministic analysis before deciding, rejects tampered or stale analyses, persists only accepted `ContributionAnalysis` nodes, records safe audit metadata, and links accepted analyses to their `Contribution` and supporting `EvidenceNode` records
+- `src/carrer/claims/` can return in-memory deterministic `CareerClaimCandidate` suggestions from accepted persisted `ContributionAnalysis` nodes. Generation revalidates the persisted node, current `Contribution`, current `EvidenceNode` records, and accepted-analysis edges; emits conservative action, outcome, and explicit metric candidates; preserves privacy and provenance; and remains read-only.
 - review functions control acceptance/rejection and privacy updates
 - `src/carrer/artifacts/` builds professional artifacts, renders Markdown, validates warnings, and preserves traceability
 - legacy artifact symbols remain re-exported by `career_intelligence_mvp.py` for scripts and tests
@@ -42,6 +43,7 @@ External Source
 - `Contribution` is a domain contract with explicit application-level creation and persistence; automatic creation, clustering, and Work-to-Impact analysis are not wired into the pipeline
 - `ContributionCandidate` is a revisable suggestion contract only; candidates are not graph nodes and are not persisted automatically. Promotion to `Contribution` is an explicit human action that validates the candidate and evidence refs, applies controlled overrides, calls the existing contribution creation service, and records audit metadata. Rejection records only audit and creates no nodes or edges.
 - `ContributionAnalysis` is a pure JSON-serializable in-memory contract until explicitly reviewed. Acceptance persists an accepted `ContributionAnalysis` node with Contribution and Evidence traceability; rejection stores only audit metadata. Analysis review does not alter `Contribution`, `Evidence`, pipeline behavior, artifacts, or `CareerClaim`.
+- `CareerClaimCandidate` is a pure JSON-serializable in-memory contract only. It is generated only from accepted `ContributionAnalysis`, uses deterministic IDs and supporting fact/signal refs, treats impact signals as observations rather than confirmed impact, never derives percentages or unit conversions, and is not consumed by artifacts or the pipeline.
 - `CareerClaim` remains a domain contract only; no creation or persistence is wired into the pipeline
 ## Architectural Characteristics
 - deterministic core behavior for ingestion/normalization/persistence
@@ -55,10 +57,10 @@ External Source
 - monolith entrypoint still owns legacy review/orchestration compatibility
 - several business rules remain hardcoded in deterministic maps/patterns
 - modular extraction is incomplete and still depends on compatibility imports
-- artifact generators still consume accepted knowledge directly; `CareerClaim` consumption is a future phase
-- contribution candidate discovery exists only as an explicit read-only query; `ContributionAnalysis` generation exists only as an explicit in-memory query and persistence requires explicit acceptance; automatic contribution creation, automatic Work-to-Impact review, impact scoring, and automatic `CareerClaim` generation are not implemented
+- artifact generators still consume accepted knowledge directly; `CareerClaim` and `CareerClaimCandidate` consumption is a future phase
+- contribution candidate discovery exists only as an explicit read-only query; `ContributionAnalysis` generation exists only as an explicit in-memory query and persistence requires explicit acceptance; `CareerClaimCandidate` generation exists only as an explicit read-only query from accepted analysis; automatic contribution creation, automatic Work-to-Impact review, impact scoring, and automatic `CareerClaim` generation are not implemented
 - contribution candidate promotion and rejection are explicit review operations; they are not part of the pipeline and do not run context, action, outcome, impact, or artifact analysis
-- the legacy pipeline, inference, ingestion, and artifacts do not execute or import `ContributionAnalysis` review
+- the legacy pipeline, inference, ingestion, and artifacts do not execute or import `ContributionAnalysis` review or `CareerClaimCandidate` generation
 ## Preservation Rules
 Any refactor must preserve:
 - Evidence -> Observation -> Knowledge -> Artifact flow

@@ -44,6 +44,12 @@ Accepted `ContributionAnalysis` nodes preserve edges to the reviewed `Contributi
 
 Impact signals are not confirmed impact. Metrics are included only when a structured source field provides an explicit numeric value and an explicit or semantically unambiguous unit. The analysis does not calculate percentages, normalize units, convert units, round values, or infer impact from free text.
 
+### CareerClaimCandidate
+
+A career claim candidate is a deterministic, revisable suggestion generated from one accepted and persisted `ContributionAnalysis`.
+
+**Current implementation**: `CareerClaimCandidate` is a pure JSON-serializable in-memory contract. Generation revalidates the persisted accepted analysis, its `Contribution`, supporting `EvidenceNode` records, and accepted-analysis edges before producing candidates. Candidates preserve analysis, contribution, evidence, fact, and signal provenance; keep the accepted analysis privacy level; use conservative statements; and do not calculate percentages, convert metrics, confirm impact signals, persist `CareerClaim`, run artifacts, or run the pipeline.
+
 ### Outcome
 
 An outcome is a result produced by a contribution.
@@ -86,7 +92,7 @@ Examples:
 
 **Architectural intent**: Career claims are the bridge between knowledge and artifacts. They are concrete statements derived from accepted knowledge and ready for inclusion in resumes, LinkedIn profiles, STAR stories, etc.
 
-**Current implementation**: `CareerClaim` is now formalized as a domain contract only. Artifact generators still produce statements directly from accepted knowledge nodes and do not consume career claims yet.
+**Current implementation**: `CareerClaim` is now formalized as a domain contract only. Deterministic `CareerClaimCandidate` suggestions can be generated in memory from accepted `ContributionAnalysis` records, but no `CareerClaim` creation or persistence is wired. Artifact generators still produce statements directly from accepted knowledge nodes and do not consume career claims or claim candidates yet.
 
 ### Artifact
 
