@@ -37,6 +37,18 @@ from carrer.artifacts.claim_based import (
     render_claim_based_artifact_markdown,
     validate_claim_based_artifact,
 )
+from carrer.artifacts.claim_queries import (
+    get_claim_based_professional_artifact,
+    list_claim_based_professional_artifacts,
+)
+from carrer.artifacts.claim_review import (
+    PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
+    PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+    accept_claim_based_artifact,
+    claim_based_professional_artifact_id,
+    reject_claim_based_artifact,
+    validate_persisted_claim_based_professional_artifact,
+)
 from carrer.artifacts.rendering import (
     artifact_date,
     artifact_markdown,
@@ -79,6 +91,7 @@ __all__ = [
     "career_timeline_markdown",
     "claim_based_artifact",
     "claim_based_artifact_id",
+    "claim_based_professional_artifact_id",
     "claim_strength",
     "claim_strength_rank",
     "cluster_technology_knowledge",
@@ -100,6 +113,7 @@ __all__ = [
     "generate_star_stories_draft",
     "generate_tailored_cover_letter",
     "generate_tailored_resume",
+    "get_claim_based_professional_artifact",
     "get_job_description_by_id",
     "interview_answers_markdown",
     "interview_prep_markdown",
@@ -107,7 +121,12 @@ __all__ = [
     "job_requirement_matches",
     "learning_roadmap_markdown",
     "linkedin_markdown",
+    "list_claim_based_professional_artifacts",
+    "PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM",
+    "PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE",
+    "accept_claim_based_artifact",
     "render_claim_based_artifact_markdown",
+    "reject_claim_based_artifact",
     "requirement_key",
     "requirement_key_set",
     "resume_markdown",
@@ -118,6 +137,7 @@ __all__ = [
     "technology_from_statement",
     "validate_artifact",
     "validate_claim_based_artifact",
+    "validate_persisted_claim_based_professional_artifact",
     "warning_severity",
     "warning_summary",
 ]

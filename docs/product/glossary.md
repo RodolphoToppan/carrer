@@ -102,7 +102,7 @@ Examples: resume, LinkedIn profile section, STAR story, interview answer, skill 
 
 **Architectural intent**: Artifacts are composed of career claims and formatted for specific audiences.
 
-**Current implementation**: Legacy artifact generators exist and produce formatted output from accepted knowledge nodes with knowledge traceability. A separate explicit claim-based artifact API can build in-memory resume and LinkedIn claim sections from accepted `CareerClaim` nodes only; it does not select claims automatically, rewrite statements, persist artifacts, publish externally, or run from the pipeline.
+**Current implementation**: Legacy artifact generators exist and produce formatted output from accepted knowledge nodes with knowledge traceability. A separate explicit claim-based artifact API can build in-memory resume and LinkedIn claim sections from accepted `CareerClaim` nodes only; it does not select claims automatically, rewrite statements, publish externally, or run from the pipeline. A claim-based draft can be explicitly accepted only after regeneration from the original claim selection and full canonical JSON comparison; accepted drafts persist through the existing `ProfessionalArtifact` contract using the `source_type="career_claim"` exception, while rejection records only safe audit metadata. Legacy artifact status and privacy enums are not widened by this flow.
 
 ## Evidence Layer
 
@@ -200,7 +200,7 @@ An artifact generator produces formatted professional documents from accepted kn
 
 Examples: Resume Generator, LinkedIn Generator, STAR Story Generator, Interview Answer Generator.
 
-**Current implementation**: Legacy artifact generators exist for Resume, LinkedIn, STAR Stories, Interview Answers, Cover Letter, Career Timeline, and Gap Analysis. They produce formatted text with embedded knowledge traceability references. The claim-based API currently supports only explicit in-memory `resume_claims` and `linkedin_claims` sections from accepted `CareerClaim` nodes.
+**Current implementation**: Legacy artifact generators exist for Resume, LinkedIn, STAR Stories, Interview Answers, Cover Letter, Career Timeline, and Gap Analysis. They produce formatted text with embedded knowledge traceability references. The claim-based API currently supports explicit `resume_claims` and `linkedin_claims` sections from accepted `CareerClaim` nodes; those sections remain in memory unless a human explicitly accepts a current regenerated draft into `ProfessionalArtifact`.
 
 ## Privacy and Trust
 

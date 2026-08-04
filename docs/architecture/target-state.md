@@ -70,8 +70,9 @@ This sequence consolidates the stable guidance from the previous extraction mapp
 6. **Artifact extraction**
    - isolate generators, validation, traceability, and renderers
    - current status: legacy artifact builders, Markdown rendering, validation, traceability, and thin service orchestration live in `src/carrer/artifacts/`
-   - current status: a separate explicit claim-based API builds in-memory `resume_claims` and `linkedin_claims` from caller-selected accepted `CareerClaim` records. It revalidates persisted claims and edges, applies privacy by audience before construction, preserves claim statements without rewriting, renders Markdown only by direct call, and does not persist or publish artifacts.
-   - future status: broader artifact types may consume accepted `CareerClaim` records, but automatic selection, rewriting, persistence, or pipeline execution require a separate accepted decision.
+   - current status: a separate explicit claim-based API builds in-memory `resume_claims` and `linkedin_claims` from caller-selected accepted `CareerClaim` records. It revalidates persisted claims and edges, applies privacy by audience before construction, preserves claim statements without rewriting, and renders Markdown only by direct call.
+   - current status: explicit claim-based artifact review regenerates the draft from its original claim selection before accepting or rejecting it. Full canonical JSON mismatch rejects tampered or stale input. Acceptance persists through the existing `ProfessionalArtifact` contract with `source_type="career_claim"` and claim/evidence traceability edges; rejection creates only safe audit metadata. The legacy artifact status/privacy enums are not widened, and the pipeline does not run review, select claims, publish, or replace legacy artifacts.
+   - future status: broader artifact types may consume accepted `CareerClaim` records, but automatic selection, rewriting, persistence, publication, or pipeline execution require a separate accepted decision.
 7. **Interface adapters**
    - keep scripts/CLI/API as thin entrypoints
 ## Real Risks and Mitigations

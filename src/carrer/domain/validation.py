@@ -167,6 +167,8 @@ def validate_career_claim(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_professional_artifact(node: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(node, dict):
+        raise ValueError("ProfessionalArtifact node must be a dict")
     _require_text(node.get("id"), "id")
     if node.get("node_type") != "ProfessionalArtifact":
         raise ValueError("node_type must be ProfessionalArtifact")
@@ -176,9 +178,25 @@ def validate_professional_artifact(node: dict[str, Any]) -> dict[str, Any]:
     _require_text(props.get("artifact_type"), "artifact_type")
     if not isinstance(props.get("knowledge_refs", []), list):
         raise ValueError("knowledge_refs must be a list")
-    if props.get("status") not in ARTIFACT_STATUSES:
-        raise ValueError(f"Invalid artifact status: {props.get('status')}")
-    if props.get("privacy_level") not in ARTIFACT_PRIVACY_LEVELS:
-        raise ValueError(f"Invalid artifact privacy level: {props.get('privacy_level')}")
+    source_type = props.get("source_type")
+    if source_type is not None and not isinstance(source_type, str):
+        raise ValueError("source_type must be a string")
+    status = props.get("status")
+    if not isinstance(status, str):
+        raise ValueError("status must be a string")
+    privacy_level = props.get("privacy_level")
+    if not isinstance(privacy_level, str):
+        raise ValueError("privacy_level must be a string")
+    if source_type == "career_claim":
+        if status != "accepted":
+            raise ValueError("career_claim ProfessionalArtifact status must be accepted")
+        if privacy_level not in {"internal", "artifact_safe"}:
+            raise ValueError(f"Invalid career_claim artifact privacy level: {privacy_level}")
+        _validate_json(props, "properties")
+        return node
+    if status not in ARTIFACT_STATUSES:
+        raise ValueError(f"Invalid artifact status: {status}")
+    if privacy_level not in ARTIFACT_PRIVACY_LEVELS:
+        raise ValueError(f"Invalid artifact privacy level: {privacy_level}")
     _validate_json(props, "properties")
     return node

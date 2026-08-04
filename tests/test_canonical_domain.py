@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -21,6 +22,7 @@ from carrer.domain.validation import (
     validate_evidence,
     validate_knowledge,
     validate_observation,
+    validate_professional_artifact,
 )
 
 CAPTURED_AT = "2024-01-02T03:04:05+00:00"
@@ -319,6 +321,89 @@ def test_professional_artifact_contract_accepts_current_shape() -> None:
 
     assert professional_artifact_contract(artifact) is artifact
     json.dumps(artifact)
+
+
+def _professional_artifact(*, source_type: object = None) -> dict[str, Any]:
+    artifact = {
+        "id": "artifact:" + stable_hash(["Skill Matrix", []]),
+        "node_type": "ProfessionalArtifact",
+        "created_at": CAPTURED_AT,
+        "properties": {
+            "artifact_type": "Skill Matrix",
+            "knowledge_refs": [],
+            "status": "draft",
+            "privacy_level": "draft_private",
+        },
+    }
+    if source_type is not None:
+        artifact["properties"]["source_type"] = source_type
+    return artifact
+
+
+@pytest.mark.parametrize("source_type", [None, "knowledge"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "accepted"),
+        ("privacy_level", "internal"),
+    ],
+)
+def test_legacy_professional_artifact_contract_preserves_status_and_privacy_rules(
+    source_type: str | None, field: str, value: str
+) -> None:
+    artifact = _professional_artifact(source_type=source_type)
+    artifact["properties"][field] = value
+
+    with pytest.raises(ValueError):
+        validate_professional_artifact(artifact)
+
+
+@pytest.mark.parametrize("privacy_level", ["artifact_safe", "internal"])
+def test_claim_based_professional_artifact_contract_accepts_claim_only_status_and_privacy(
+    privacy_level: str,
+) -> None:
+    artifact = _professional_artifact(source_type="career_claim")
+    artifact["properties"]["artifact_type"] = "resume_claims"
+    artifact["properties"]["status"] = "accepted"
+    artifact["properties"]["privacy_level"] = privacy_level
+
+    assert validate_professional_artifact(artifact) is artifact
+
+
+@pytest.mark.parametrize("privacy_level", ["private", "exported", "draft_private", "internal_review"])
+def test_claim_based_professional_artifact_contract_rejects_unapproved_privacy(privacy_level: str) -> None:
+    artifact = _professional_artifact(source_type="career_claim")
+    artifact["properties"]["artifact_type"] = "resume_claims"
+    artifact["properties"]["status"] = "accepted"
+    artifact["properties"]["privacy_level"] = privacy_level
+
+    with pytest.raises(ValueError, match="privacy"):
+        validate_professional_artifact(artifact)
+
+
+def test_professional_artifact_contract_rejects_non_dict_node_with_value_error() -> None:
+    with pytest.raises(ValueError):
+        validate_professional_artifact(None)  # type: ignore[arg-type]
+
+
+def test_professional_artifact_contract_rejects_non_dict_properties_with_value_error() -> None:
+    artifact = _professional_artifact(source_type="career_claim")
+    artifact["properties"] = []
+
+    with pytest.raises(ValueError):
+        validate_professional_artifact(artifact)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("field", ["source_type", "status", "privacy_level"])
+def test_professional_artifact_contract_rejects_invalid_field_types_with_value_error(field: str) -> None:
+    artifact = _professional_artifact(source_type="career_claim")
+    artifact["properties"]["artifact_type"] = "resume_claims"
+    artifact["properties"]["status"] = "accepted"
+    artifact["properties"]["privacy_level"] = "artifact_safe"
+    artifact["properties"][field] = []
+
+    with pytest.raises(ValueError):
+        validate_professional_artifact(artifact)
 
 
 def test_all_new_contracts_are_json_serializable() -> None:
