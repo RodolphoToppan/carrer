@@ -54,7 +54,9 @@ def accept_claim_based_artifact_export(
             raise ValueError("export candidate created_at does not match existing ArtifactExportReceipt")
         if not target.exists():
             raise ValueError("ArtifactExportReceipt exists but exported file is missing")
-        if target.read_text(encoding="utf-8") != current["content"]:
+        with target.open("r", encoding="utf-8", newline="") as handle:
+            actual_content = handle.read()
+        if actual_content != current["content"]:
             raise ValueError("exported file content does not match receipt")
         _audit_accept(
             store,
@@ -186,7 +188,7 @@ def validate_persisted_artifact_export_receipt(store: GraphStore, node: object) 
     expected = _receipt_node(current, decision_actor=props["review_actor"], decided_at=props["reviewed_at"])
     if _canonical_json(valid) != _canonical_json(expected):
         raise ValueError(_RECEIPT_MISMATCH)
-    _validate_original_review_audit(store, valid)
+    validate_original_artifact_export_acceptance_audit(store, valid)
     return valid
 
 
@@ -339,21 +341,29 @@ def _audit(
     )
 
 
-def _validate_original_review_audit(store: GraphStore, receipt: dict[str, Any]) -> None:
-    accepted = [
-        record
-        for record in store.audit_records
-        if record.get("audit_type") == "claim_based_artifact_export_accepted"
-        and record.get("metadata", {}).get("receipt_id") == receipt["id"]
-        and record.get("metadata", {}).get("created") is True
-    ]
+def validate_original_artifact_export_acceptance_audit(store: GraphStore, receipt: dict[str, Any]) -> dict[str, Any]:
+    _require_store(store, "audit_records")
+    valid = validate_artifact_export_receipt_contract(receipt)
+    accepted = []
+    for record in store.audit_records:
+        if not isinstance(record, dict):
+            raise ValueError("audit records must contain objects")
+        metadata = record.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError("audit metadata must be an object")
+        if record.get("audit_type") != "claim_based_artifact_export_accepted":
+            continue
+        if not isinstance(metadata, dict):
+            raise ValueError("original export acceptance audit metadata must be an object")
+        if metadata.get("receipt_id") == valid["id"] and metadata.get("created") is True:
+            accepted.append(record)
     if not accepted:
         raise ValueError("ArtifactExportReceipt requires original export acceptance audit")
     if len(accepted) != 1:
         raise ValueError("ArtifactExportReceipt must have exactly one original export acceptance audit")
     first = accepted[0]
     first_index = store.audit_records.index(first)
-    props = receipt["properties"]
+    props = valid["properties"]
     metadata = first.get("metadata")
     if not isinstance(metadata, dict):
         raise ValueError("original export acceptance audit metadata must be an object")
@@ -363,7 +373,7 @@ def _validate_original_review_audit(store: GraphStore, receipt: dict[str, Any]) 
         "created_at": props["reviewed_at"],
         "metadata.actor": props["review_actor"],
         "metadata.decided_at": props["reviewed_at"],
-        "metadata.receipt_id": receipt["id"],
+        "metadata.receipt_id": valid["id"],
         "metadata.candidate_id": props["export_candidate_id"],
         "metadata.candidate_created_at": props["candidate_created_at"],
         "metadata.source_artifact_id": props["source_artifact_id"],
@@ -397,6 +407,7 @@ def _validate_original_review_audit(store: GraphStore, receipt: dict[str, Any]) 
     )
     if first.get("id") != expected_audit_id:
         raise ValueError("original export acceptance audit id does not match metadata")
+    return first
 
 
 def _validate_file_name(file_name: str) -> None:

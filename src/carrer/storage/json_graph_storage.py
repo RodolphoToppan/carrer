@@ -7,11 +7,15 @@ IDs, hashes, ordering, immutability constraints, and audit behavior.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
 from carrer.domain.hashing import stable_hash
 from carrer.domain.timestamps import now
+
+IMMUTABLE_NODE_TYPES = frozenset({"EvidenceNode", "ArtifactExportRepairReceipt"})
+IMMUTABLE_ON_CREATE_NODE_TYPES = frozenset({"ArtifactExportRepairReceipt"})
 
 
 class JsonGraphStorage:
@@ -84,8 +88,21 @@ class JsonGraphStorage:
             Tuple of (node, was_created) where was_created is True if newly created
         """
         existing = self.nodes.get(node["id"])
-        if existing:
+        if existing is not None:
+            if (
+                existing.get("node_type") in IMMUTABLE_ON_CREATE_NODE_TYPES
+                or node.get("node_type") in IMMUTABLE_ON_CREATE_NODE_TYPES
+            ) and json.dumps(existing, sort_keys=True, separators=(",", ":")) != json.dumps(
+                node, sort_keys=True, separators=(",", ":")
+            ):
+                raise ValueError(f"{existing['node_type']} is immutable")
+            if existing.get("node_type") in IMMUTABLE_NODE_TYPES:
+                return copy.deepcopy(existing), False
             return existing, False
+        if node.get("node_type") in IMMUTABLE_NODE_TYPES:
+            stored = copy.deepcopy(node)
+            self.nodes[node["id"]] = stored
+            return copy.deepcopy(stored), True
         self.nodes[node["id"]] = node
         return node, True
 
@@ -101,8 +118,8 @@ class JsonGraphStorage:
             ValueError: If attempting to update EvidenceNode (immutable)
         """
         node = self.nodes[node_id]
-        if node["node_type"] == "EvidenceNode":
-            raise ValueError("EvidenceNode is immutable")
+        if node["node_type"] in IMMUTABLE_NODE_TYPES:
+            raise ValueError(f"{node['node_type']} is immutable")
         node["properties"].update(properties)
 
     def create_edge(self, edge_type: str, from_node_id: str, to_node_id: str, **properties: object) -> None:
@@ -137,7 +154,10 @@ class JsonGraphStorage:
         Returns:
             List of nodes matching the type
         """
-        return [node for node in self.nodes.values() if node["node_type"] == node_type]
+        nodes = [node for node in self.nodes.values() if node["node_type"] == node_type]
+        if node_type in IMMUTABLE_NODE_TYPES:
+            return copy.deepcopy(nodes)
+        return nodes
 
     def append_audit_record(
         self, audit_type: str, target_refs: list[str], result: str, metadata: dict | None = None

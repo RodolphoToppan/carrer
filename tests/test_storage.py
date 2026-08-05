@@ -4,6 +4,7 @@ Tests for graph storage abstraction and JSON implementation.
 These tests verify storage isolation, format preservation, and contract compliance.
 """
 
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -19,6 +20,18 @@ class JsonGraphStorageTest(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = ROOT / "tmp"
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    def repair_receipt(self):
+        return {
+            "id": "artifact_export_repair_receipt:1",
+            "node_type": "ArtifactExportRepairReceipt",
+            "created_at": "2024-01-01T00:00:00Z",
+            "properties": {
+                "actor": "reviewer",
+                "decided_at": "2024-01-01T00:00:00Z",
+                "repair_candidate_id": "candidate:1",
+            },
+        }
 
     def test_empty_storage_has_no_nodes_edges_or_audit_records(self):
         """New storage instance should be empty"""
@@ -66,6 +79,76 @@ class JsonGraphStorageTest(unittest.TestCase):
         self.assertTrue(was_created1)
         self.assertFalse(was_created2)
         self.assertEqual(result2["properties"]["data"], "first")
+
+    def test_mutable_nodes_keep_existing_alias_behavior(self):
+        """Mutable nodes keep create_node and nodes_by_type reference semantics."""
+        storage = JsonGraphStorage()
+        node = {
+            "id": "test:1",
+            "node_type": "TestNode",
+            "created_at": "2024-01-01T00:00:00Z",
+            "properties": {"actor": "reviewer"},
+        }
+
+        persisted, created = storage.create_node(node)
+        node["properties"]["actor"] = "changed-by-input"
+        persisted["properties"]["actor"] = "changed-by-return"
+        result = storage.nodes_by_type("TestNode")
+        result[0]["properties"]["actor"] = "changed-by-query"
+
+        self.assertTrue(created)
+        self.assertEqual(storage.nodes["test:1"]["properties"]["actor"], "changed-by-query")
+
+    def test_immutable_repair_receipt_does_not_alias_submitted_or_created_node(self):
+        storage = JsonGraphStorage()
+        submitted = self.repair_receipt()
+
+        persisted, created = storage.create_node(submitted)
+        submitted["properties"]["actor"] = "attacker"
+        persisted["properties"]["actor"] = "attacker"
+
+        self.assertTrue(created)
+        self.assertEqual(storage.nodes[persisted["id"]]["properties"]["actor"], "reviewer")
+
+    def test_immutable_repair_receipt_idempotent_return_does_not_alias_stored_node(self):
+        storage = JsonGraphStorage()
+        original = self.repair_receipt()
+        storage.create_node(original)
+        original_stored_value = copy.deepcopy(storage.nodes[original["id"]])
+
+        returned, created = storage.create_node(copy.deepcopy(original_stored_value))
+        returned["properties"]["actor"] = "attacker"
+
+        self.assertFalse(created)
+        self.assertEqual(storage.nodes[original["id"]], original_stored_value)
+
+    def test_nodes_by_type_does_not_alias_immutable_repair_receipt(self):
+        storage = JsonGraphStorage()
+        receipt = self.repair_receipt()
+        storage.create_node(receipt)
+
+        result = storage.nodes_by_type("ArtifactExportRepairReceipt")
+        result[0]["properties"]["actor"] = "attacker"
+
+        self.assertEqual(storage.nodes[receipt["id"]]["properties"]["actor"], "reviewer")
+
+    def test_evidence_node_does_not_alias_storage_operations(self):
+        storage = JsonGraphStorage()
+        evidence = {
+            "id": "evidence:1",
+            "node_type": "EvidenceNode",
+            "created_at": "2024-01-01T00:00:00Z",
+            "properties": {"actor": "reviewer"},
+        }
+
+        persisted, created = storage.create_node(evidence)
+        evidence["properties"]["actor"] = "attacker"
+        persisted["properties"]["actor"] = "attacker"
+        result = storage.nodes_by_type("EvidenceNode")
+        result[0]["properties"]["actor"] = "attacker"
+
+        self.assertTrue(created)
+        self.assertEqual(storage.nodes["evidence:1"]["properties"]["actor"], "reviewer")
 
     def test_update_node_modifies_properties(self):
         """update_node should merge properties into existing node"""
