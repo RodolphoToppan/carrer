@@ -8,6 +8,12 @@ import re
 from collections import Counter
 from typing import Any, NamedTuple
 
+from carrer.artifacts.claim_based import CLAIM_BASED_ARTIFACT_TYPES
+from carrer.artifacts.claim_review import (
+    PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
+    PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+    claim_based_professional_artifact_id,
+)
 from carrer.claims.candidates import career_claim_candidate_id, supporting_fact_ref, supporting_signal_ref
 from carrer.claims.review import (
     CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
@@ -22,10 +28,16 @@ from carrer.contributions.analysis_review import (
     CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE,
 )
 from carrer.contributions.service import CONTRIBUTION_SUPPORTED_BY_EVIDENCE
-from carrer.domain.enums import CONFIDENCE_LEVELS, PRIVACY_LEVELS, REVIEW_STATUSES
+from carrer.domain.enums import (
+    ARTIFACT_PRIVACY_LEVELS,
+    ARTIFACT_STATUSES,
+    CONFIDENCE_LEVELS,
+    PRIVACY_LEVELS,
+    REVIEW_STATUSES,
+)
 from carrer.domain.hashing import stable_hash
 from carrer.domain.identity import canonical_refs, career_claim_id
-from carrer.domain.validation import validate_contribution
+from carrer.domain.validation import validate_contribution, validate_professional_artifact
 
 REPORT_TYPE = "graph_integrity"
 REPORT_VERSION = "v1"
@@ -97,6 +109,29 @@ ISSUE_CODES = frozenset(
         "CAREER_CLAIM_EVIDENCE_EDGE_MISSING",
         "CAREER_CLAIM_EVIDENCE_EDGE_UNDECLARED",
         "CAREER_CLAIM_SUPPORTING_REFS_INVALID",
+        "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID",
+        "PROFESSIONAL_ARTIFACT_ID_INVALID",
+        "PROFESSIONAL_ARTIFACT_STATUS_INVALID",
+        "PROFESSIONAL_ARTIFACT_PRIVACY_INVALID",
+        "PROFESSIONAL_ARTIFACT_TYPE_INVALID",
+        "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID",
+        "PROFESSIONAL_ARTIFACT_CLAIM_REFS_INVALID",
+        "PROFESSIONAL_ARTIFACT_CLAIM_NOT_FOUND",
+        "PROFESSIONAL_ARTIFACT_CLAIM_TYPE_INVALID",
+        "PROFESSIONAL_ARTIFACT_CLAIM_STATUS_INVALID",
+        "PROFESSIONAL_ARTIFACT_CLAIM_PRIVACY_INCOMPATIBLE",
+        "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING",
+        "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED",
+        "PROFESSIONAL_ARTIFACT_KNOWLEDGE_REFS_INVALID",
+        "PROFESSIONAL_ARTIFACT_KNOWLEDGE_NOT_FOUND",
+        "PROFESSIONAL_ARTIFACT_KNOWLEDGE_TYPE_INVALID",
+        "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_MISSING",
+        "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_UNDECLARED",
+        "PROFESSIONAL_ARTIFACT_EVIDENCE_REFS_INVALID",
+        "PROFESSIONAL_ARTIFACT_EVIDENCE_NOT_FOUND",
+        "PROFESSIONAL_ARTIFACT_EVIDENCE_TYPE_INVALID",
+        "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_MISSING",
+        "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED",
     }
 )
 
@@ -269,6 +304,73 @@ ISSUE_CONTRACTS = {
     "CAREER_CLAIM_SUPPORTING_REFS_INVALID": _IssueContract(
         "error", "node", "nodes", "properties.metadata", "empty", "empty"
     ),
+    "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_ID_INVALID": _IssueContract("error", "node", "nodes", "id", "empty", "empty"),
+    "PROFESSIONAL_ARTIFACT_STATUS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.status", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_PRIVACY_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.privacy_level", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.artifact_type", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.source_type", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.claim_refs", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_STATUS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_PRIVACY_INCOMPATIBLE": _IssueContract(
+        "error", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_KNOWLEDGE_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.knowledge_refs", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_KNOWLEDGE_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.knowledge_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_KNOWLEDGE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.knowledge_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.knowledge_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.knowledge_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_EVIDENCE_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "empty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_EVIDENCE_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_EVIDENCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
 }
 PERSISTED_REF_PREFIXES = (
     "artifact:",
@@ -327,6 +429,7 @@ def validate_graph_integrity(
         issues.extend(_contribution_issues(nodes, edges, selected_node_types))
         issues.extend(_contribution_analysis_issues(nodes, edges, selected_node_types))
         issues.extend(_career_claim_issues(nodes, edges, selected_node_types))
+        issues.extend(_professional_artifact_issues(nodes, edges, selected_node_types))
         issues.extend(_edge_issues(nodes, edges, selected_node_types))
         issues.extend(_audit_issues(nodes, audit_records, selected_node_types))
         issues = _ordered_issues(_dedupe_issues(issues))
@@ -934,6 +1037,412 @@ def _career_claim_evidence_issues(
                 )
             )
     return issues
+
+
+def _professional_artifact_issues(
+    nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None
+) -> list[dict[str, Any]]:
+    if node_types is not None and "ProfessionalArtifact" not in node_types:
+        return []
+    issues: list[dict[str, Any]] = []
+    for key in sorted(nodes, key=_safe_sort_key):
+        node = nodes[key]
+        if not isinstance(node, dict) or node.get("node_type") != "ProfessionalArtifact":
+            continue
+        issues.extend(_professional_artifact_node_issues(nodes, edges, key, node))
+    return issues
+
+
+def _professional_artifact_node_issues(
+    nodes: dict[Any, Any], edges: list[Any], key: Any, node: dict[str, Any]
+) -> list[dict[str, Any]]:
+    subject = _node_subject_ref(key)
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return []
+
+    path = f"nodes.{subject}.properties"
+    issues: list[dict[str, Any]] = []
+    specific_fields: set[str] = set()
+    source_type = props.get("source_type")
+    if source_type is None:
+        artifact_variant = "legacy"
+        source_type_invalid = False
+    elif source_type == "career_claim":
+        artifact_variant = "career_claim"
+        source_type_invalid = False
+    else:
+        artifact_variant = _professional_artifact_expected_variant(props)
+        source_type_invalid = True
+
+    if not _text(props.get("artifact_type")) or (
+        artifact_variant == "career_claim" and props.get("artifact_type") not in CLAIM_BASED_ARTIFACT_TYPES
+    ):
+        specific_fields.add("artifact_type")
+        issues.append(_issue("PROFESSIONAL_ARTIFACT_TYPE_INVALID", "error", "node", subject, f"{path}.artifact_type"))
+    if source_type_invalid:
+        specific_fields.add("source_type")
+        issues.append(
+            _issue("PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID", "error", "node", subject, f"{path}.source_type")
+        )
+
+    if artifact_variant == "career_claim" and source_type == "career_claim":
+        issues.extend(_claim_based_professional_artifact_issues(nodes, edges, subject, node, props, specific_fields))
+    elif artifact_variant == "legacy" and source_type is None:
+        issues.extend(_legacy_professional_artifact_issues(nodes, edges, subject, node, props, specific_fields))
+
+    if _has_residual_professional_artifact_violation(node, specific_fields, artifact_variant):
+        issues.append(_issue("PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID", "error", "node", subject, path))
+    return issues
+
+
+def _claim_based_professional_artifact_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    node: dict[str, Any],
+    props: dict[str, Any],
+    specific_fields: set[str],
+) -> list[dict[str, Any]]:
+    path = f"nodes.{subject}.properties"
+    issues: list[dict[str, Any]] = []
+    if props.get("status") != "accepted":
+        specific_fields.add("status")
+        issues.append(_issue("PROFESSIONAL_ARTIFACT_STATUS_INVALID", "error", "node", subject, f"{path}.status"))
+    if props.get("privacy_level") not in {"internal", "artifact_safe"}:
+        specific_fields.add("privacy_level")
+        issues.append(
+            _issue("PROFESSIONAL_ARTIFACT_PRIVACY_INVALID", "error", "node", subject, f"{path}.privacy_level")
+        )
+
+    if _claim_based_professional_artifact_identity_mismatch(node, props):
+        specific_fields.add("id")
+        issues.append(_issue("PROFESSIONAL_ARTIFACT_ID_INVALID", "error", "node", subject, f"nodes.{subject}.id"))
+
+    claim_refs = _valid_canonical_ref_list(props.get("claim_refs"), required=True)
+    if claim_refs is None:
+        specific_fields.add("claim_refs")
+        issues.append(
+            _issue("PROFESSIONAL_ARTIFACT_CLAIM_REFS_INVALID", "error", "node", subject, f"{path}.claim_refs")
+        )
+    else:
+        claim_nodes: list[dict[str, Any]] = []
+        for ref in claim_refs:
+            claim = nodes.get(ref)
+            related = [_safe_issue_ref(ref, fallback_prefix="provenance_ref:")]
+            if claim is None:
+                issues.append(
+                    _issue(
+                        "PROFESSIONAL_ARTIFACT_CLAIM_NOT_FOUND",
+                        "warning",
+                        "node",
+                        subject,
+                        f"{path}.claim_refs",
+                        related_refs=related,
+                    )
+                )
+            elif not isinstance(claim, dict) or claim.get("node_type") != "CareerClaim":
+                issues.append(
+                    _issue(
+                        "PROFESSIONAL_ARTIFACT_CLAIM_TYPE_INVALID",
+                        "error",
+                        "node",
+                        subject,
+                        f"{path}.claim_refs",
+                        related_refs=related,
+                    )
+                )
+            else:
+                claim_nodes.append(claim)
+                claim_props = claim.get("properties")
+                if not isinstance(claim_props, dict) or claim_props.get("status") != "accepted":
+                    issues.append(
+                        _issue(
+                            "PROFESSIONAL_ARTIFACT_CLAIM_STATUS_INVALID",
+                            "error",
+                            "node",
+                            subject,
+                            f"{path}.claim_refs",
+                            related_refs=related,
+                        )
+                    )
+                if _claim_privacy_incompatible(props, claim_props if isinstance(claim_props, dict) else {}):
+                    issues.append(
+                        _issue(
+                            "PROFESSIONAL_ARTIFACT_CLAIM_PRIVACY_INCOMPATIBLE",
+                            "error",
+                            "node",
+                            subject,
+                            f"{path}.claim_refs",
+                            related_refs=related,
+                        )
+                    )
+                if not _has_edge(edges, PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, node.get("id"), ref):
+                    issues.append(
+                        _issue(
+                            "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING",
+                            "warning",
+                            "node",
+                            subject,
+                            f"{path}.claim_refs",
+                            related_refs=related,
+                        )
+                    )
+        for target in _edge_targets(edges, PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, node.get("id")):
+            if target not in claim_refs:
+                issues.append(
+                    _issue(
+                        "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED",
+                        "warning",
+                        "node",
+                        subject,
+                        f"{path}.claim_refs",
+                        related_refs=[_safe_issue_ref(target, fallback_prefix="edge_endpoint:")],
+                    )
+                )
+        issues.extend(_claim_based_artifact_evidence_issues(nodes, edges, subject, node, props, claim_nodes))
+    return issues
+
+
+def _legacy_professional_artifact_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    node: dict[str, Any],
+    props: dict[str, Any],
+    specific_fields: set[str],
+) -> list[dict[str, Any]]:
+    path = f"nodes.{subject}.properties"
+    issues: list[dict[str, Any]] = []
+    if props.get("status") not in ARTIFACT_STATUSES:
+        specific_fields.add("status")
+        issues.append(_issue("PROFESSIONAL_ARTIFACT_STATUS_INVALID", "error", "node", subject, f"{path}.status"))
+    if props.get("privacy_level") not in ARTIFACT_PRIVACY_LEVELS:
+        specific_fields.add("privacy_level")
+        issues.append(
+            _issue("PROFESSIONAL_ARTIFACT_PRIVACY_INVALID", "error", "node", subject, f"{path}.privacy_level")
+        )
+    knowledge_refs = _valid_canonical_ref_list(props.get("knowledge_refs", []), required=False)
+    if knowledge_refs is None:
+        specific_fields.add("knowledge_refs")
+        issues.append(
+            _issue("PROFESSIONAL_ARTIFACT_KNOWLEDGE_REFS_INVALID", "error", "node", subject, f"{path}.knowledge_refs")
+        )
+    else:
+        issues.extend(
+            _professional_artifact_ref_edge_issues(
+                nodes,
+                edges,
+                subject,
+                node.get("id"),
+                knowledge_refs,
+                "KnowledgeNode",
+                "ARTIFACT_GENERATED_FROM_KNOWLEDGE",
+                f"{path}.knowledge_refs",
+                "PROFESSIONAL_ARTIFACT_KNOWLEDGE_NOT_FOUND",
+                "PROFESSIONAL_ARTIFACT_KNOWLEDGE_TYPE_INVALID",
+                "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_MISSING",
+                "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_UNDECLARED",
+            )
+        )
+    evidence_refs = props.get("evidence_refs")
+    if evidence_refs is not None:
+        valid_evidence_refs = _valid_canonical_ref_list(evidence_refs, required=False)
+        if valid_evidence_refs is None:
+            specific_fields.add("evidence_refs")
+            issues.append(
+                _issue("PROFESSIONAL_ARTIFACT_EVIDENCE_REFS_INVALID", "error", "node", subject, f"{path}.evidence_refs")
+            )
+        else:
+            issues.extend(
+                _professional_artifact_ref_edge_issues(
+                    nodes,
+                    edges,
+                    subject,
+                    node.get("id"),
+                    valid_evidence_refs,
+                    "EvidenceNode",
+                    PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+                    f"{path}.evidence_refs",
+                    "PROFESSIONAL_ARTIFACT_EVIDENCE_NOT_FOUND",
+                    "PROFESSIONAL_ARTIFACT_EVIDENCE_TYPE_INVALID",
+                    "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_MISSING",
+                    "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED",
+                )
+            )
+    return issues
+
+
+def _claim_based_artifact_evidence_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    node: dict[str, Any],
+    props: dict[str, Any],
+    claim_nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    path = f"nodes.{subject}.properties"
+    evidence_refs = _valid_canonical_ref_list(props.get("evidence_refs"), required=False)
+    if evidence_refs is None:
+        return [
+            _issue("PROFESSIONAL_ARTIFACT_EVIDENCE_REFS_INVALID", "error", "node", subject, f"{path}.evidence_refs")
+        ]
+    expected = canonical_refs(
+        ref
+        for claim in claim_nodes
+        for ref in claim.get("properties", {}).get("evidence_refs", [])
+        if isinstance(ref, str)
+    )
+    issues = []
+    if claim_nodes and evidence_refs != expected:
+        issues.append(
+            _issue("PROFESSIONAL_ARTIFACT_EVIDENCE_REFS_INVALID", "error", "node", subject, f"{path}.evidence_refs")
+        )
+    issues.extend(
+        _professional_artifact_ref_edge_issues(
+            nodes,
+            edges,
+            subject,
+            node.get("id"),
+            evidence_refs,
+            "EvidenceNode",
+            PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+            f"{path}.evidence_refs",
+            "PROFESSIONAL_ARTIFACT_EVIDENCE_NOT_FOUND",
+            "PROFESSIONAL_ARTIFACT_EVIDENCE_TYPE_INVALID",
+            "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_MISSING",
+            "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED",
+        )
+    )
+    return issues
+
+
+def _professional_artifact_ref_edge_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    artifact_ref: object,
+    declared_refs: list[str],
+    expected_type: str,
+    edge_type: str,
+    path: str,
+    not_found_code: str,
+    type_invalid_code: str,
+    edge_missing_code: str,
+    edge_undeclared_code: str,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    valid_targets = []
+    for ref in declared_refs:
+        related = [_safe_issue_ref(ref, fallback_prefix="provenance_ref:")]
+        target = nodes.get(ref)
+        if target is None:
+            issues.append(_issue(not_found_code, "warning", "node", subject, path, related_refs=related))
+        elif not isinstance(target, dict) or target.get("node_type") != expected_type:
+            issues.append(_issue(type_invalid_code, "error", "node", subject, path, related_refs=related))
+        else:
+            valid_targets.append(ref)
+    edge_targets = _edge_targets(edges, edge_type, artifact_ref)
+    for ref in valid_targets:
+        if ref not in edge_targets:
+            issues.append(
+                _issue(
+                    edge_missing_code,
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=[_safe_issue_ref(ref, fallback_prefix="provenance_ref:")],
+                )
+            )
+    for target in edge_targets:
+        if target not in declared_refs:
+            issues.append(
+                _issue(
+                    edge_undeclared_code,
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=[_safe_issue_ref(target, fallback_prefix="edge_endpoint:")],
+                )
+            )
+    return issues
+
+
+def _claim_based_professional_artifact_identity_mismatch(node: dict[str, Any], props: dict[str, Any]) -> bool:
+    source_artifact_id = props.get("source_artifact_id")
+    if not isinstance(source_artifact_id, str) or not source_artifact_id:
+        return False
+    expected = claim_based_professional_artifact_id(source_artifact_id)
+    return node.get("id") != expected or ("id" in props and props.get("id") != expected)
+
+
+def _claim_privacy_incompatible(artifact_props: dict[str, Any], claim_props: dict[str, Any]) -> bool:
+    privacy = claim_props.get("privacy_level")
+    audience = artifact_props.get("audience")
+    if audience == "public":
+        return privacy not in {"artifact_safe", "exported"}
+    if audience == "internal":
+        return privacy not in {"internal", "artifact_safe", "exported"}
+    return False
+
+
+def _professional_artifact_expected_variant(props: dict[str, Any]) -> str:
+    claim_based_fields = {
+        "audience",
+        "artifact_version",
+        "claim_refs",
+        "content",
+        "items",
+        "review_actor",
+        "reviewed_at",
+        "source_artifact_id",
+        "traceability",
+        "warnings",
+    }
+    if any(field in props for field in claim_based_fields):
+        return "career_claim"
+    return "legacy"
+
+
+def _has_residual_professional_artifact_violation(
+    node: dict[str, Any], specific_fields: set[str], expected_variant: str
+) -> bool:
+    candidate = copy.deepcopy(node)
+    props = candidate.get("properties")
+    if not isinstance(props, dict):
+        return False
+    if "id" in specific_fields:
+        source_artifact_id = props.get("source_artifact_id")
+        if isinstance(source_artifact_id, str) and source_artifact_id:
+            candidate["id"] = claim_based_professional_artifact_id(source_artifact_id)
+            if "id" in props:
+                props["id"] = candidate["id"]
+    if "artifact_type" in specific_fields:
+        props["artifact_type"] = "resume_claims" if expected_variant == "career_claim" else "Resume"
+    if "source_type" in specific_fields:
+        if expected_variant == "career_claim":
+            props["source_type"] = "career_claim"
+        else:
+            props.pop("source_type", None)
+    if not _jsonable(props):
+        return True
+    if "status" in specific_fields:
+        props["status"] = "accepted" if expected_variant == "career_claim" else "draft"
+    if "privacy_level" in specific_fields:
+        props["privacy_level"] = "internal" if expected_variant == "career_claim" else "draft_private"
+    if "claim_refs" in specific_fields:
+        props["claim_refs"] = [f"career_claim:{'0' * 64}"]
+    if "knowledge_refs" in specific_fields:
+        props["knowledge_refs"] = []
+    if "evidence_refs" in specific_fields:
+        props["evidence_refs"] = []
+    try:
+        validate_professional_artifact(candidate)
+    except ValueError:
+        return True
+    return False
 
 
 def _edge_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None) -> list[dict[str, Any]]:
@@ -1698,6 +2207,8 @@ def _is_valid_issue_path(value: object) -> bool:
         if len(parts) == 3:
             return parts[2] in {"id", "node_type", "created_at", "properties"}
         return parts[2] == "properties" and parts[3] in {
+            "artifact_type",
+            "claim_refs",
             "status",
             "privacy_level",
             "confidence",
@@ -1706,6 +2217,7 @@ def _is_valid_issue_path(value: object) -> bool:
             "evidence_refs",
             "observation_refs",
             "knowledge_refs",
+            "source_type",
             "source_refs",
             "metadata",
         }

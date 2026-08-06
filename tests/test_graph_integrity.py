@@ -6,6 +6,13 @@ from typing import Any
 
 import pytest
 
+from carrer.artifacts import (
+    PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
+    PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+    accept_claim_based_artifact,
+    build_artifact_from_career_claims,
+    generate_resume_draft,
+)
 from carrer.claims import (
     CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
     CAREER_CLAIM_FROM_CONTRIBUTION,
@@ -26,7 +33,7 @@ from carrer.contributions.analysis_review import (
 from carrer.contributions.candidates import contribution_candidate
 from carrer.contributions.service import CONTRIBUTION_SUPPORTED_BY_EVIDENCE
 from carrer.domain.hashing import stable_hash
-from carrer.domain.models import evidence_node
+from carrer.domain.models import evidence_node, knowledge_node
 from carrer.integrity import (
     graph_integrity_report_id,
     validate_graph_integrity,
@@ -140,6 +147,118 @@ def _claim_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, dict[str, A
     candidate = generate_career_claim_candidates(store, analysis["id"])[0]
     claim = accept_career_claim_candidate(store, candidate, decision_actor="human", decided_at=NOW)["claim"]
     return store, contribution, analysis, claim
+
+
+def _claim_artifact_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
+    store, _, _, claim = _claim_store(evidence_count)
+    draft = build_artifact_from_career_claims(
+        store,
+        claim_ids=[claim["id"]],
+        artifact_type="resume_claims",
+        audience="public",
+        created_at=NOW,
+    )
+    artifact = accept_claim_based_artifact(store, draft, decision_actor="human", decided_at=NOW)["artifact"]
+    _canonicalize_audit_target_refs(store)
+    return store, claim, artifact
+
+
+def _legacy_artifact_store() -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
+    store = JsonGraphStorage()
+    evidence = _real_evidence()
+    store.create_node(evidence)
+    knowledge = knowledge_node(
+        knowledge_type="TECHNOLOGY_EXPERIENCE",
+        statement="Practical experience with Python.",
+        created_at=NOW,
+        evidence_refs=[evidence["id"]],
+        status="accepted",
+        privacy_level="artifact_safe",
+        confidence="high",
+    )
+    store.create_node(knowledge)
+    artifact = generate_resume_draft(store)
+    _canonicalize_audit_target_refs(store)
+    return store, knowledge, artifact
+
+
+def _canonicalize_audit_target_refs(store: JsonGraphStorage) -> None:
+    for audit in store.audit_records:
+        audit["target_refs"] = sorted(set(audit["target_refs"]))
+
+
+def _professional_artifact_issue_stores() -> list[JsonGraphStorage]:
+    stores: list[JsonGraphStorage] = []
+    store, _, artifact = _claim_artifact_store()
+    artifact["id"] = "artifact:" + "b" * 64
+    stores.append(store)
+
+    for field, value in (
+        ("status", "draft"),
+        ("privacy_level", "private"),
+        ("artifact_type", "unsupported"),
+        ("source_type", []),
+        ("claim_refs", [object()]),
+        ("evidence_refs", [object()]),
+        ("review_actor", SensitiveNonJsonValue()),
+        ("claim_refs", ["career_claim:" + "c" * 64]),
+        ("evidence_refs", ["evidence:" + "c" * 64]),
+        ("evidence_refs", []),
+    ):
+        store, _, artifact = _claim_artifact_store()
+        artifact["properties"][field] = value
+        stores.append(store)
+
+    store, _, artifact = _claim_artifact_store()
+    store.nodes["career_claim:" + "c" * 64] = dict(
+        _node("career_claim:" + "c" * 64, "ArtifactExportReceipt"),
+        properties={},
+    )
+    artifact["properties"]["claim_refs"] = ["career_claim:" + "c" * 64]
+    stores.append(store)
+
+    store, claim, _ = _claim_artifact_store()
+    claim["properties"]["status"] = "rejected"
+    stores.append(store)
+
+    store, claim, _ = _claim_artifact_store()
+    claim["properties"]["privacy_level"] = "internal"
+    stores.append(store)
+
+    store, _, _ = _claim_artifact_store()
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM]
+    stores.append(store)
+
+    store, _, artifact = _claim_artifact_store()
+    store.create_edge(PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, artifact["id"], "career_claim:" + "c" * 64)
+    stores.append(store)
+
+    store, _, artifact = _claim_artifact_store()
+    store.nodes["evidence:" + "c" * 64] = dict(_node("evidence:" + "c" * 64, "ArtifactExportReceipt"), properties={})
+    artifact["properties"]["evidence_refs"] = ["evidence:" + "c" * 64]
+    stores.append(store)
+
+    store, _, _ = _claim_artifact_store()
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE]
+    stores.append(store)
+
+    for value in ([object()], ["knowledge:" + "c" * 64], []):
+        store, _, artifact = _legacy_artifact_store()
+        artifact["properties"]["knowledge_refs"] = value
+        stores.append(store)
+
+    store, _, artifact = _legacy_artifact_store()
+    store.nodes["knowledge:" + "c" * 64] = dict(
+        _node("knowledge:" + "c" * 64, "ArtifactExportReceipt"),
+        properties={},
+    )
+    artifact["properties"]["knowledge_refs"] = ["knowledge:" + "c" * 64]
+    stores.append(store)
+
+    store, _, _ = _legacy_artifact_store()
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != "ARTIFACT_GENERATED_FROM_KNOWLEDGE"]
+    stores.append(store)
+    return stores
 
 
 def _api_contribution_store() -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
@@ -1283,6 +1402,395 @@ def test_contribution_analysis_and_claim_invalid_issues_coexist() -> None:
     assert validate_graph_integrity_report(report) is report
 
 
+def test_claim_based_professional_artifact_api_happy_path_has_no_issues() -> None:
+    store, _, _ = _claim_artifact_store()
+
+    assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_legacy_professional_artifact_happy_path_has_no_claim_false_positive() -> None:
+    store, _, _ = _legacy_artifact_store()
+
+    assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_contribution_analysis_claim_artifact_flow_has_no_issues() -> None:
+    store, _, _ = _claim_artifact_store(evidence_count=2)
+
+    assert _codes(validate_graph_integrity(store)) == []
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (lambda artifact: artifact.__setitem__("properties", []), "NODE_PROPERTIES_INVALID"),
+        (
+            lambda artifact: artifact["properties"].__setitem__("status", "draft"),
+            "PROFESSIONAL_ARTIFACT_STATUS_INVALID",
+        ),
+        (
+            lambda artifact: artifact["properties"].__setitem__("privacy_level", "private"),
+            "PROFESSIONAL_ARTIFACT_PRIVACY_INVALID",
+        ),
+        (
+            lambda artifact: artifact["properties"].__setitem__("artifact_type", "unsupported"),
+            "PROFESSIONAL_ARTIFACT_TYPE_INVALID",
+        ),
+        (
+            lambda artifact: artifact["properties"].__setitem__("source_type", []),
+            "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID",
+        ),
+        (
+            lambda artifact: artifact["properties"].__setitem__("review_actor", SensitiveNonJsonValue()),
+            "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID",
+        ),
+        (lambda artifact: artifact.__setitem__("id", "artifact:" + "b" * 64), "PROFESSIONAL_ARTIFACT_ID_INVALID"),
+    ],
+)
+def test_professional_artifact_contract_issues(mutate: Any, code: str) -> None:
+    store, _, artifact = _claim_artifact_store()
+    mutate(artifact)
+
+    assert code in _codes(validate_graph_integrity(store))
+
+
+@pytest.mark.parametrize("source_type", ["", "customer", "career-claim", " knowledge ", [], {}, object()])
+def test_professional_artifact_unknown_source_type_does_not_select_variant(source_type: object) -> None:
+    store, _, artifact = _legacy_artifact_store()
+    artifact["properties"]["source_type"] = source_type
+    before = None if type(source_type) is object else _snapshot(store)
+    before_source_type = artifact["properties"]["source_type"]
+
+    first = validate_graph_integrity(store)
+    reordered = copy.deepcopy(store)
+    reordered.edges = list(reversed(reordered.edges))
+
+    codes = _codes(first)
+    report_json = json.dumps(first, sort_keys=True)
+
+    assert "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_REFS_INVALID" not in codes
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_REFS_INVALID" not in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" not in codes
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_MISSING" not in codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" not in codes
+    assert "object at" not in report_json
+    assert validate_graph_integrity_report(first) is first
+    assert json.loads(report_json) == first
+    assert first == validate_graph_integrity(store)
+    assert first == validate_graph_integrity(reordered)
+    if before is None:
+        assert artifact["properties"]["source_type"] is before_source_type
+    else:
+        assert _snapshot(store) == before
+
+
+def test_professional_artifact_unknown_source_type_with_residual_error_keeps_both() -> None:
+    store, _, artifact = _legacy_artifact_store()
+    artifact["properties"]["source_type"] = "customer"
+    artifact["properties"]["review_actor"] = SensitiveNonJsonValue()
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" in codes
+
+
+def test_claim_based_professional_artifact_unknown_source_type_preserves_variant_without_generic() -> None:
+    store, _, artifact = _claim_artifact_store()
+    artifact["properties"]["source_type"] = "customer"
+    before = _snapshot(store)
+    reordered = copy.deepcopy(store)
+    reordered.edges = list(reversed(reordered.edges))
+
+    report = validate_graph_integrity(store)
+    codes = _codes(report)
+    report_json = json.dumps(report, sort_keys=True)
+
+    assert "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" not in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_REFS_INVALID" not in codes
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_REFS_INVALID" not in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" not in codes
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_MISSING" not in codes
+    assert "ArtifactExportReceipt" not in report_json
+    assert "SECRET" not in report_json
+    assert validate_graph_integrity_report(report) is report
+    assert json.loads(report_json) == report
+    assert report == validate_graph_integrity(store)
+    assert report == validate_graph_integrity(reordered)
+    assert _snapshot(store) == before
+
+
+def test_claim_based_professional_artifact_unknown_source_type_with_residual_error_keeps_both() -> None:
+    store, _, artifact = _claim_artifact_store()
+    artifact["properties"]["source_type"] = "customer"
+    artifact["properties"]["review_actor"] = SensitiveNonJsonValue()
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert "PROFESSIONAL_ARTIFACT_SOURCE_TYPE_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" in codes
+    assert "SensitiveNonJsonValue SECRET" not in report_json
+    assert "object at" not in report_json
+    assert validate_graph_integrity_report(report) is report
+
+
+@pytest.mark.parametrize("claim_refs", [{}, [], [object()], None, [" "], ["career_claim:" + "c" * 64, []]])
+def test_professional_artifact_claim_refs_invalid_values(claim_refs: object) -> None:
+    store, _, artifact = _claim_artifact_store()
+    artifact["properties"]["claim_refs"] = claim_refs
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_REFS_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_NOT_FOUND" not in codes
+
+
+def test_professional_artifact_claim_ref_target_and_edge_issues() -> None:
+    missing, _, missing_artifact = _claim_artifact_store()
+    missing_artifact["properties"]["claim_refs"] = ["career_claim:" + "c" * 64]
+
+    wrong_type, _, wrong_artifact = _claim_artifact_store()
+    wrong_type.nodes["career_claim:" + "c" * 64] = dict(
+        _node("career_claim:" + "c" * 64, "KnowledgeNode"), properties={}
+    )
+    wrong_artifact["properties"]["claim_refs"] = ["career_claim:" + "c" * 64]
+
+    no_edge, _, _ = _claim_artifact_store()
+    no_edge.edges = [
+        edge for edge in no_edge.edges if edge.get("edge_type") != PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM
+    ]
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_NOT_FOUND" in _codes(validate_graph_integrity(missing))
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_TYPE_INVALID" in _codes(validate_graph_integrity(wrong_type))
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" in _codes(validate_graph_integrity(no_edge))
+
+
+def test_professional_artifact_claim_edges_are_independent_from_bad_declared_claim() -> None:
+    store, claim, artifact = _claim_artifact_store()
+    extra_claim = copy.deepcopy(claim)
+    extra_claim["id"] = "career_claim:" + "c" * 64
+    store.nodes[extra_claim["id"]] = extra_claim
+    artifact["properties"]["claim_refs"] = ["career_claim:" + "d" * 64]
+    store.create_edge(PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, artifact["id"], extra_claim["id"])
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_NOT_FOUND" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" not in codes
+
+
+def test_professional_artifact_type_invalid_claim_still_inspects_undeclared_edge() -> None:
+    store, claim, artifact = _claim_artifact_store()
+    wrong_ref = "career_claim:" + "c" * 64
+    extra_claim = copy.deepcopy(claim)
+    extra_claim["id"] = "career_claim:" + "d" * 64
+    store.nodes[wrong_ref] = dict(_node(wrong_ref, "KnowledgeNode"), properties={})
+    store.nodes[extra_claim["id"]] = extra_claim
+    artifact["properties"]["claim_refs"] = [wrong_ref]
+    store.create_edge(PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, artifact["id"], extra_claim["id"])
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_TYPE_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" not in codes
+
+
+def test_professional_artifact_textual_unsafe_and_non_textual_targets() -> None:
+    unsafe, _, unsafe_artifact = _claim_artifact_store()
+    unsafe.edges.append(
+        _edge(PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, unsafe_artifact["id"], "customer:SECRET markdown")
+    )
+    unsafe_json = json.dumps(validate_graph_integrity(unsafe), sort_keys=True)
+
+    non_text, _, non_text_artifact = _claim_artifact_store()
+    non_text.edges.append(
+        _edge(PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM, non_text_artifact["id"], "career_claim:" + "c" * 64)
+    )
+    non_text.edges[-1]["to_node_id"] = []
+    non_text_codes = _codes(validate_graph_integrity(non_text))
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED" in unsafe_json
+    assert "SECRET" not in unsafe_json
+    assert "edge_endpoint:" in unsafe_json
+    assert "EDGE_TARGET_REF_INVALID" in non_text_codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_UNDECLARED" not in non_text_codes
+
+
+def test_professional_artifact_claim_privacy_incompatible() -> None:
+    store, claim, _ = _claim_artifact_store()
+    claim["properties"]["privacy_level"] = "internal"
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_PRIVACY_INCOMPATIBLE" in _codes(validate_graph_integrity(store))
+
+
+def test_professional_artifact_claim_privacy_and_missing_edge_are_independent() -> None:
+    store, claim, artifact = _claim_artifact_store()
+    claim["properties"]["privacy_level"] = "internal"
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM]
+    before = _snapshot(store)
+    reordered = copy.deepcopy(store)
+    reordered.edges = list(reversed(reordered.edges))
+
+    report = validate_graph_integrity(store)
+    codes = _codes(report)
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_PRIVACY_INCOMPATIBLE" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" in codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" not in codes
+    assert validate_graph_integrity_report(report) is report
+    assert report == validate_graph_integrity(store)
+    assert report == validate_graph_integrity(reordered)
+    assert _snapshot(store) == before
+
+
+def test_professional_artifact_claim_status_and_missing_edge_are_independent() -> None:
+    store, claim, _ = _claim_artifact_store()
+    claim["properties"]["status"] = "rejected"
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM]
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_STATUS_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_CLAIM_EDGE_MISSING" in codes
+
+
+@pytest.mark.parametrize("knowledge_refs", [{}, [object()], None, [" "], ["knowledge:" + "c" * 64, []]])
+def test_professional_artifact_legacy_knowledge_refs_invalid_values(knowledge_refs: object) -> None:
+    store, _, artifact = _legacy_artifact_store()
+    artifact["properties"]["knowledge_refs"] = knowledge_refs
+
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_REFS_INVALID" in _codes(validate_graph_integrity(store))
+
+
+def test_professional_artifact_legacy_knowledge_target_and_edge_issues() -> None:
+    missing, _, missing_artifact = _legacy_artifact_store()
+    missing_artifact["properties"]["knowledge_refs"] = ["knowledge:" + "c" * 64]
+
+    wrong_type, _, wrong_artifact = _legacy_artifact_store()
+    wrong_type.nodes["knowledge:" + "c" * 64] = dict(_node("knowledge:" + "c" * 64, "EvidenceNode"), properties={})
+    wrong_artifact["properties"]["knowledge_refs"] = ["knowledge:" + "c" * 64]
+
+    no_edge, _, _ = _legacy_artifact_store()
+    no_edge.edges = [edge for edge in no_edge.edges if edge.get("edge_type") != "ARTIFACT_GENERATED_FROM_KNOWLEDGE"]
+
+    undeclared, knowledge, undeclared_artifact = _legacy_artifact_store()
+    undeclared_artifact["properties"]["knowledge_refs"] = []
+    undeclared.create_edge("ARTIFACT_GENERATED_FROM_KNOWLEDGE", undeclared_artifact["id"], knowledge["id"])
+
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_NOT_FOUND" in _codes(validate_graph_integrity(missing))
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_TYPE_INVALID" in _codes(validate_graph_integrity(wrong_type))
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_MISSING" in _codes(validate_graph_integrity(no_edge))
+    assert "PROFESSIONAL_ARTIFACT_KNOWLEDGE_EDGE_UNDECLARED" in _codes(validate_graph_integrity(undeclared))
+
+
+@pytest.mark.parametrize("evidence_refs", [{}, [object()], None, [" "], ["evidence:" + "c" * 64, []]])
+def test_professional_artifact_evidence_refs_invalid_values(evidence_refs: object) -> None:
+    store, _, artifact = _claim_artifact_store()
+    artifact["properties"]["evidence_refs"] = evidence_refs
+
+    assert "PROFESSIONAL_ARTIFACT_EVIDENCE_REFS_INVALID" in _codes(validate_graph_integrity(store))
+
+
+def test_professional_artifact_evidence_target_and_edge_issues() -> None:
+    missing, _, missing_artifact = _claim_artifact_store()
+    missing_artifact["properties"]["evidence_refs"] = ["evidence:" + "c" * 64]
+
+    wrong_type, _, wrong_artifact = _claim_artifact_store()
+    wrong_type.nodes["evidence:" + "c" * 64] = dict(
+        _node("evidence:" + "c" * 64, "ArtifactExportReceipt"), properties={}
+    )
+    wrong_artifact["properties"]["evidence_refs"] = ["evidence:" + "c" * 64]
+
+    no_edge, _, _ = _claim_artifact_store()
+    no_edge.edges = [
+        edge for edge in no_edge.edges if edge.get("edge_type") != PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE
+    ]
+
+    undeclared, _, undeclared_artifact = _claim_artifact_store(evidence_count=2)
+    undeclared_artifact["properties"]["evidence_refs"] = []
+
+    assert "PROFESSIONAL_ARTIFACT_EVIDENCE_NOT_FOUND" in _codes(validate_graph_integrity(missing))
+    assert "PROFESSIONAL_ARTIFACT_EVIDENCE_TYPE_INVALID" in _codes(validate_graph_integrity(wrong_type))
+    assert "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_MISSING" in _codes(validate_graph_integrity(no_edge))
+    assert "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED" in _codes(validate_graph_integrity(undeclared))
+
+
+def test_professional_artifact_specific_and_residual_generic_behavior() -> None:
+    isolated, _, isolated_artifact = _claim_artifact_store()
+    isolated_artifact["properties"]["status"] = "draft"
+    residual, _, residual_artifact = _claim_artifact_store()
+    residual_artifact["properties"]["status"] = "draft"
+    residual_artifact["properties"]["review_actor"] = SensitiveNonJsonValue()
+
+    isolated_codes = _codes(validate_graph_integrity(isolated))
+    residual_codes = _codes(validate_graph_integrity(residual))
+
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" in isolated_codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" not in isolated_codes
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" in residual_codes
+    assert "PROFESSIONAL_ARTIFACT_PROPERTIES_INVALID" in residual_codes
+
+
+def test_professional_artifact_filters_read_only_json_and_determinism() -> None:
+    store, _, artifact = _claim_artifact_store(evidence_count=2)
+    artifact["properties"]["status"] = "draft"
+    before = _snapshot(store)
+    reordered = copy.deepcopy(store)
+    reordered.nodes = dict(reversed(list(reordered.nodes.items())))
+    reordered.edges = list(reversed(reordered.edges))
+
+    artifact_only = validate_graph_integrity(store, node_types=["ProfessionalArtifact"])
+    claim_only = validate_graph_integrity(store, node_types=["CareerClaim"])
+    combined = validate_graph_integrity(store, node_types=["CareerClaim", "ProfessionalArtifact"])
+    warnings = validate_graph_integrity(store, severities=["warning"])
+
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" in _codes(artifact_only)
+    assert all(not code.startswith("PROFESSIONAL_ARTIFACT_") for code in _codes(claim_only))
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" in _codes(combined)
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" not in _codes(warnings)
+    assert validate_graph_integrity(store) == validate_graph_integrity(reordered)
+    assert json.loads(json.dumps(artifact_only)) == artifact_only
+    assert _snapshot(store) == before
+
+
+def test_claim_and_professional_artifact_invalid_issues_coexist_without_false_positive() -> None:
+    store, claim, artifact = _claim_artifact_store()
+    claim["properties"]["status"] = "rejected"
+    artifact["properties"]["status"] = "draft"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "CAREER_CLAIM_STATUS_INVALID" in codes
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" in codes
+
+
+def test_professional_artifact_invalid_does_not_create_false_positive_in_claim() -> None:
+    store, _, artifact = _claim_artifact_store()
+    artifact["properties"]["status"] = "draft"
+
+    assert [code for code in _codes(validate_graph_integrity(store)) if code.startswith("CAREER_CLAIM_")] == []
+
+
+def test_export_receipts_remain_outside_professional_artifact_semantics() -> None:
+    store, _, _ = _claim_artifact_store()
+    store.nodes["artifact_export_receipt:" + "c" * 64] = _node(
+        "artifact_export_receipt:" + "c" * 64,
+        "ArtifactExportReceipt",
+    )
+    store.nodes["artifact_export_repair_receipt:" + "c" * 64] = _node(
+        "artifact_export_repair_receipt:" + "c" * 64,
+        "ArtifactExportRepairReceipt",
+    )
+
+    assert _codes(validate_graph_integrity(store)) == []
+
+
 def test_audit_target_refs_rules_are_conservative() -> None:
     store = _store()
     store.audit_records = [
@@ -2096,8 +2604,13 @@ def test_all_generated_issue_contracts_are_accepted() -> None:
     ]
 
     report = validate_graph_integrity(store)
+    generated_codes = set(_codes(report))
+    for artifact_store in _professional_artifact_issue_stores():
+        artifact_report = validate_graph_integrity(artifact_store)
+        generated_codes.update(_codes(artifact_report))
+        assert validate_graph_integrity_report(artifact_report) is artifact_report
 
-    assert set(_codes(report)) == ISSUE_CODES
+    assert generated_codes == ISSUE_CODES
     assert validate_graph_integrity_report(report) is report
 
 
