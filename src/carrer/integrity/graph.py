@@ -8,8 +8,16 @@ from collections import Counter
 from typing import Any, NamedTuple
 
 from carrer.contributions.analysis import parse_iso8601_with_timezone
+from carrer.contributions.analysis_contracts import ANALYSIS_VERSION, contribution_analysis_id
+from carrer.contributions.analysis_review import (
+    CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION,
+    CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE,
+)
+from carrer.contributions.service import CONTRIBUTION_SUPPORTED_BY_EVIDENCE
+from carrer.domain.enums import CONFIDENCE_LEVELS, PRIVACY_LEVELS, REVIEW_STATUSES
 from carrer.domain.hashing import stable_hash
 from carrer.domain.identity import canonical_refs
+from carrer.domain.validation import validate_contribution
 
 REPORT_TYPE = "graph_integrity"
 REPORT_VERSION = "v1"
@@ -40,6 +48,27 @@ ISSUE_CODES = frozenset(
         "AUDIT_TARGET_NOT_FOUND",
         "AUDIT_TARGET_REFS_DUPLICATED",
         "AUDIT_TARGET_REFS_NOT_CANONICAL",
+        "CONTRIBUTION_PROPERTIES_INVALID",
+        "CONTRIBUTION_STATUS_INVALID",
+        "CONTRIBUTION_PRIVACY_INVALID",
+        "CONTRIBUTION_PROVENANCE_REFS_INVALID",
+        "CONTRIBUTION_EVIDENCE_NOT_FOUND",
+        "CONTRIBUTION_EVIDENCE_TYPE_INVALID",
+        "CONTRIBUTION_EVIDENCE_EDGE_MISSING",
+        "CONTRIBUTION_EVIDENCE_EDGE_UNDECLARED",
+        "CONTRIBUTION_ANALYSIS_PROPERTIES_INVALID",
+        "CONTRIBUTION_ANALYSIS_STATUS_INVALID",
+        "CONTRIBUTION_ANALYSIS_PRIVACY_INVALID",
+        "CONTRIBUTION_ANALYSIS_CONTRIBUTION_REF_INVALID",
+        "CONTRIBUTION_ANALYSIS_CONTRIBUTION_NOT_FOUND",
+        "CONTRIBUTION_ANALYSIS_CONTRIBUTION_TYPE_INVALID",
+        "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_MISSING",
+        "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED",
+        "CONTRIBUTION_ANALYSIS_EVIDENCE_REFS_INVALID",
+        "CONTRIBUTION_ANALYSIS_EVIDENCE_NOT_FOUND",
+        "CONTRIBUTION_ANALYSIS_EVIDENCE_TYPE_INVALID",
+        "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_MISSING",
+        "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED",
     }
 )
 
@@ -48,7 +77,7 @@ class _IssueContract(NamedTuple):
     severity: str
     subject_type: str
     collection: str
-    field: str | None
+    field: str | tuple[str | None, ...] | None
     related_refs: str
     metadata: str
 
@@ -85,6 +114,76 @@ ISSUE_CONTRACTS = {
     ),
     "AUDIT_TARGET_REFS_NOT_CANONICAL": _IssueContract(
         "warning", "audit_record", "audit_records", "target_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_PROPERTIES_INVALID": _IssueContract("error", "node", "nodes", "properties", "empty", "empty"),
+    "CONTRIBUTION_STATUS_INVALID": _IssueContract("error", "node", "nodes", "properties.status", "empty", "empty"),
+    "CONTRIBUTION_PRIVACY_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.privacy_level", "empty", "empty"
+    ),
+    "CONTRIBUTION_PROVENANCE_REFS_INVALID": _IssueContract(
+        "error",
+        "node",
+        "nodes",
+        (
+            "properties",
+            "properties.evidence_refs",
+            "properties.observation_refs",
+            "properties.knowledge_refs",
+            "properties.source_refs",
+        ),
+        "empty",
+        "empty",
+    ),
+    "CONTRIBUTION_EVIDENCE_NOT_FOUND": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_EVIDENCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_EVIDENCE_EDGE_MISSING": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_PROPERTIES_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties", "empty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_STATUS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.status", "empty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_PRIVACY_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.privacy_level", "empty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.contribution_ref", "empty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.contribution_ref", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.contribution_ref", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.contribution_ref", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.contribution_ref", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_EVIDENCE_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "empty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_EVIDENCE_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_EVIDENCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
     ),
 }
 PERSISTED_REF_PREFIXES = (
@@ -124,6 +223,7 @@ SAFE_ISSUE_FALLBACK_PREFIXES = (
     "edge_endpoint:",
     "invalid_node_ref:",
     "node_key:",
+    "provenance_ref:",
 )
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -140,6 +240,8 @@ def validate_graph_integrity(
         filters = {"node_types": _optional_strings(node_types, "node_types"), "severities": _severities(severities)}
         selected_node_types = filters["node_types"]
         issues = _node_issues(nodes, selected_node_types)
+        issues.extend(_contribution_issues(nodes, edges, selected_node_types))
+        issues.extend(_contribution_analysis_issues(nodes, edges, selected_node_types))
         issues.extend(_edge_issues(nodes, edges, selected_node_types))
         issues.extend(_audit_issues(nodes, audit_records, selected_node_types))
         issues = _ordered_issues(_dedupe_issues(issues))
@@ -266,6 +368,289 @@ def _node_issues(nodes: dict[Any, Any], node_types: list[str] | None) -> list[di
     return issues
 
 
+def _contribution_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None) -> list[dict[str, Any]]:
+    if node_types is not None and "Contribution" not in node_types:
+        return []
+    issues: list[dict[str, Any]] = []
+    for key in sorted(nodes, key=_safe_sort_key):
+        node = nodes[key]
+        if not isinstance(node, dict) or node.get("node_type") != "Contribution":
+            continue
+        subject = _node_subject_ref(key)
+        props = node.get("properties")
+        if not isinstance(props, dict):
+            continue
+        path = f"nodes.{subject}.properties"
+        specific_failures: set[str] = set()
+        if props.get("status") not in REVIEW_STATUSES:
+            issues.append(_issue("CONTRIBUTION_STATUS_INVALID", "error", "node", subject, f"{path}.status"))
+            specific_failures.add("status")
+        if props.get("privacy_level") not in PRIVACY_LEVELS:
+            issues.append(_issue("CONTRIBUTION_PRIVACY_INVALID", "error", "node", subject, f"{path}.privacy_level"))
+            specific_failures.add("privacy_level")
+
+        ref_errors, evidence_refs = _contribution_provenance_ref_issues(subject, props)
+        issues.extend(ref_errors)
+        if ref_errors:
+            specific_failures.add("provenance")
+        if _has_residual_contribution_contract_error(node, specific_failures):
+            issues.append(_issue("CONTRIBUTION_PROPERTIES_INVALID", "error", "node", subject, path))
+
+        if evidence_refs is None:
+            continue
+        valid_evidence_refs = []
+        for ref in evidence_refs:
+            target = nodes.get(ref)
+            related = [_safe_issue_ref(ref, fallback_prefix="provenance_ref:")]
+            if target is None:
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_EVIDENCE_NOT_FOUND",
+                        "error",
+                        "node",
+                        subject,
+                        f"{path}.evidence_refs",
+                        related_refs=related,
+                    )
+                )
+            elif not isinstance(target, dict) or target.get("node_type") != "EvidenceNode":
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_EVIDENCE_TYPE_INVALID",
+                        "error",
+                        "node",
+                        subject,
+                        f"{path}.evidence_refs",
+                        related_refs=related,
+                    )
+                )
+            else:
+                valid_evidence_refs.append(ref)
+
+        contribution_ref = node.get("id")
+        if not isinstance(contribution_ref, str) or not contribution_ref.strip() or contribution_ref != key:
+            continue
+        edge_targets = _contribution_evidence_edge_targets(edges, contribution_ref)
+        declared = set(evidence_refs)
+        for ref in valid_evidence_refs:
+            if ref not in edge_targets:
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_EVIDENCE_EDGE_MISSING",
+                        "error",
+                        "node",
+                        subject,
+                        f"{path}.evidence_refs",
+                        related_refs=[_safe_issue_ref(ref, fallback_prefix="provenance_ref:")],
+                    )
+                )
+        for ref in sorted(edge_targets - declared):
+            related = [_safe_issue_ref(ref, fallback_prefix="provenance_ref:")]
+            issues.append(
+                _issue(
+                    "CONTRIBUTION_EVIDENCE_EDGE_UNDECLARED",
+                    "warning",
+                    "node",
+                    subject,
+                    f"{path}.evidence_refs",
+                    related_refs=related,
+                )
+            )
+    return issues
+
+
+def _contribution_analysis_issues(
+    nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None
+) -> list[dict[str, Any]]:
+    if node_types is not None and "ContributionAnalysis" not in node_types:
+        return []
+    issues: list[dict[str, Any]] = []
+    for key in sorted(nodes, key=_safe_sort_key):
+        node = nodes[key]
+        if not isinstance(node, dict) or node.get("node_type") != "ContributionAnalysis":
+            continue
+        issues.extend(_contribution_analysis_node_issues(nodes, edges, key, node))
+    return issues
+
+
+def _contribution_analysis_node_issues(
+    nodes: dict[Any, Any], edges: list[Any], key: Any, node: dict[str, Any]
+) -> list[dict[str, Any]]:
+    subject = _node_subject_ref(key)
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return []
+
+    issues: list[dict[str, Any]] = []
+    specific_fields: set[str] = set()
+    contribution_ref = props.get("contribution_ref")
+    evidence_refs = props.get("evidence_refs")
+
+    if props.get("status") != "accepted":
+        specific_fields.add("status")
+        issues.append(
+            _issue(
+                "CONTRIBUTION_ANALYSIS_STATUS_INVALID",
+                "error",
+                "node",
+                subject,
+                f"nodes.{subject}.properties.status",
+            )
+        )
+    if props.get("privacy_level") not in PRIVACY_LEVELS:
+        specific_fields.add("privacy_level")
+        issues.append(
+            _issue(
+                "CONTRIBUTION_ANALYSIS_PRIVACY_INVALID",
+                "error",
+                "node",
+                subject,
+                f"nodes.{subject}.properties.privacy_level",
+            )
+        )
+
+    valid_contribution = _text(contribution_ref)
+    if not valid_contribution:
+        specific_fields.add("contribution_ref")
+        issues.append(
+            _issue(
+                "CONTRIBUTION_ANALYSIS_CONTRIBUTION_REF_INVALID",
+                "error",
+                "node",
+                subject,
+                f"nodes.{subject}.properties.contribution_ref",
+            )
+        )
+    else:
+        contribution = nodes.get(contribution_ref)
+        contribution_ref_safe = _safe_issue_ref(contribution_ref, fallback_prefix="invalid_node_ref:")
+        if contribution is None:
+            issues.append(
+                _issue(
+                    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_NOT_FOUND",
+                    "warning",
+                    "node",
+                    subject,
+                    f"nodes.{subject}.properties.contribution_ref",
+                    related_refs=[contribution_ref_safe],
+                )
+            )
+        elif not isinstance(contribution, dict) or contribution.get("node_type") != "Contribution":
+            issues.append(
+                _issue(
+                    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_TYPE_INVALID",
+                    "error",
+                    "node",
+                    subject,
+                    f"nodes.{subject}.properties.contribution_ref",
+                    related_refs=[contribution_ref_safe],
+                )
+            )
+        elif not _has_edge(edges, CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, node.get("id"), contribution_ref):
+            issues.append(
+                _issue(
+                    "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_MISSING",
+                    "warning",
+                    "node",
+                    subject,
+                    f"nodes.{subject}.properties.contribution_ref",
+                    related_refs=[contribution_ref_safe],
+                )
+            )
+
+    valid_evidence_refs = _valid_ordered_unique_strings(evidence_refs)
+    if not valid_evidence_refs:
+        specific_fields.add("evidence_refs")
+        issues.append(
+            _issue(
+                "CONTRIBUTION_ANALYSIS_EVIDENCE_REFS_INVALID",
+                "error",
+                "node",
+                subject,
+                f"nodes.{subject}.properties.evidence_refs",
+            )
+        )
+    else:
+        if not isinstance(evidence_refs, list):
+            return issues
+        evidence_ref_list = [ref for ref in evidence_refs if isinstance(ref, str)]
+        declared_evidence = set(evidence_ref_list)
+        for ref in evidence_ref_list:
+            evidence_ref_safe = _safe_issue_ref(ref, fallback_prefix="invalid_node_ref:")
+            evidence = nodes.get(ref)
+            if evidence is None:
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_ANALYSIS_EVIDENCE_NOT_FOUND",
+                        "warning",
+                        "node",
+                        subject,
+                        f"nodes.{subject}.properties.evidence_refs",
+                        related_refs=[evidence_ref_safe],
+                    )
+                )
+            elif not isinstance(evidence, dict) or evidence.get("node_type") != "EvidenceNode":
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_ANALYSIS_EVIDENCE_TYPE_INVALID",
+                        "error",
+                        "node",
+                        subject,
+                        f"nodes.{subject}.properties.evidence_refs",
+                        related_refs=[evidence_ref_safe],
+                    )
+                )
+            elif not _has_edge(edges, CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, node.get("id"), ref):
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_MISSING",
+                        "warning",
+                        "node",
+                        subject,
+                        f"nodes.{subject}.properties.evidence_refs",
+                        related_refs=[evidence_ref_safe],
+                    )
+                )
+        for target in _edge_targets(edges, CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, node.get("id")):
+            if target not in declared_evidence:
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED",
+                        "warning",
+                        "node",
+                        subject,
+                        f"nodes.{subject}.properties.evidence_refs",
+                        related_refs=[_safe_issue_ref(target, fallback_prefix="edge_endpoint:")],
+                    )
+                )
+
+    if valid_contribution:
+        for target in _edge_targets(edges, CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, node.get("id")):
+            if target != contribution_ref:
+                issues.append(
+                    _issue(
+                        "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED",
+                        "warning",
+                        "node",
+                        subject,
+                        f"nodes.{subject}.properties.contribution_ref",
+                        related_refs=[_safe_issue_ref(target, fallback_prefix="edge_endpoint:")],
+                    )
+                )
+
+    if _has_residual_contribution_analysis_violation(node, props, valid_evidence_refs, specific_fields):
+        issues.append(
+            _issue(
+                "CONTRIBUTION_ANALYSIS_PROPERTIES_INVALID",
+                "error",
+                "node",
+                subject,
+                f"nodes.{subject}.properties",
+            )
+        )
+    return issues
+
+
 def _edge_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     valid_node_ids = {key for key, node in nodes.items() if isinstance(key, str) and isinstance(node, dict)}
@@ -334,6 +719,137 @@ def _edge_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] 
             )
         )
     return issues
+
+
+def _valid_ordered_unique_strings(value: object) -> bool:
+    if not isinstance(value, list):
+        return False
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        return False
+    return value == sorted(set(value))
+
+
+def _has_residual_contribution_contract_error(node: dict[Any, Any], specific_failures: set[str]) -> bool:
+    if not specific_failures:
+        try:
+            validate_contribution(node)
+        except ValueError:
+            return True
+        return False
+    props = dict(node["properties"])
+    if "status" in specific_failures:
+        props["status"] = "draft"
+    if "privacy_level" in specific_failures:
+        props["privacy_level"] = "private"
+    if "provenance" in specific_failures:
+        props.update(
+            evidence_refs=[f"evidence:{'0' * 64}"],
+            observation_refs=[],
+            knowledge_refs=[],
+            source_refs=[],
+        )
+    try:
+        validate_contribution(dict(node, properties=props))
+    except ValueError:
+        return True
+    return False
+
+
+def _contribution_provenance_ref_issues(
+    subject: str, props: dict[Any, Any]
+) -> tuple[list[dict[str, Any]], list[str] | None]:
+    issues: list[dict[str, Any]] = []
+    path = f"nodes.{subject}.properties"
+    ref_fields = ("evidence_refs", "observation_refs", "knowledge_refs", "source_refs")
+    if not any(props.get(field) for field in ref_fields):
+        issues.append(_issue("CONTRIBUTION_PROVENANCE_REFS_INVALID", "error", "node", subject, path))
+    evidence_refs: list[str] | None = []
+    for field in ref_fields:
+        refs = props.get(field)
+        if not refs:
+            continue
+        invalid = not isinstance(refs, list)
+        if not invalid:
+            invalid = any(not isinstance(ref, str) or not ref.strip() for ref in refs)
+        if not invalid:
+            invalid = refs != sorted(set(refs))
+        if invalid:
+            issues.append(_issue("CONTRIBUTION_PROVENANCE_REFS_INVALID", "error", "node", subject, f"{path}.{field}"))
+            if field == "evidence_refs":
+                evidence_refs = None
+        elif field == "evidence_refs":
+            evidence_refs = refs
+    return issues, evidence_refs
+
+
+def _contribution_evidence_edge_targets(edges: list[Any], contribution_ref: str) -> set[str]:
+    targets = set()
+    for edge in edges:
+        if (
+            isinstance(edge, dict)
+            and edge.get("edge_type") == CONTRIBUTION_SUPPORTED_BY_EVIDENCE
+            and edge.get("from_node_id") == contribution_ref
+            and isinstance(edge.get("to_node_id"), str)
+            and edge.get("to_node_id")
+        ):
+            targets.add(edge["to_node_id"])
+    return targets
+
+
+def _has_edge(edges: list[Any], edge_type: str, source: object, target: object) -> bool:
+    return any(
+        isinstance(edge, dict)
+        and edge.get("edge_type") == edge_type
+        and edge.get("from_node_id") == source
+        and edge.get("to_node_id") == target
+        for edge in edges
+    )
+
+
+def _edge_targets(edges: list[Any], edge_type: str, source: object) -> list[str]:
+    targets: set[str] = set()
+    for edge in edges:
+        if isinstance(edge, dict) and edge.get("edge_type") == edge_type and edge.get("from_node_id") == source:
+            target = edge.get("to_node_id")
+            if isinstance(target, str) and target.strip():
+                targets.add(target)
+    return sorted(targets)
+
+
+def _has_residual_contribution_analysis_violation(
+    node: dict[str, Any],
+    props: dict[str, Any],
+    valid_evidence_refs: bool,
+    specific_fields: set[str],
+) -> bool:
+    if not _jsonable(props):
+        return True
+    if not isinstance(props.get("id"), str) or not props["id"]:
+        return True
+    if node.get("id") != props.get("id"):
+        return True
+    if props.get("analysis_type") != "deterministic_contribution_analysis":
+        return True
+    if props.get("confidence") not in CONFIDENCE_LEVELS:
+        return True
+    if props.get("analysis_version") != ANALYSIS_VERSION:
+        return True
+    if not isinstance(props.get("review_actor"), str) or not props["review_actor"].strip():
+        return True
+    if not _timestamp(props.get("reviewed_at"), "reviewed_at"):
+        return True
+    for field in ("context_facts", "action_facts", "outcome_facts", "impact_signals"):
+        if not isinstance(props.get(field), list) or any(not isinstance(item, dict) for item in props[field]):
+            return True
+    for field in ("reasons", "warnings"):
+        if not _valid_ordered_unique_strings(props.get(field)):
+            return True
+    return (
+        "contribution_ref" not in specific_fields
+        and valid_evidence_refs
+        and isinstance(props.get("contribution_ref"), str)
+        and props["id"] != contribution_analysis_id(props["contribution_ref"], props["evidence_refs"])
+    )
 
 
 def _audit_issues(
@@ -740,18 +1256,36 @@ def _is_valid_issue_path(value: object) -> bool:
     if not isinstance(value, str):
         return False
     parts = value.split(".")
-    if len(parts) not in {2, 3}:
+    if len(parts) not in {2, 3, 4}:
         return False
     collection, ref = parts[0], parts[1]
     if collection == "nodes":
-        return _is_safe_issue_ref(ref) and (
-            len(parts) == 2 or parts[2] in {"id", "node_type", "created_at", "properties"}
-        )
+        if not _is_safe_issue_ref(ref):
+            return False
+        if len(parts) == 2:
+            return True
+        if len(parts) == 3:
+            return parts[2] in {"id", "node_type", "created_at", "properties"}
+        return parts[2] == "properties" and parts[3] in {
+            "status",
+            "privacy_level",
+            "contribution_ref",
+            "evidence_refs",
+            "observation_refs",
+            "knowledge_refs",
+            "source_refs",
+        }
     if collection == "edges":
-        return _is_safe_issue_ref(ref) and (len(parts) == 2 or parts[2] in {"edge_type", "from_node_id", "to_node_id"})
+        return (
+            len(parts) != 4
+            and _is_safe_issue_ref(ref)
+            and (len(parts) == 2 or parts[2] in {"edge_type", "from_node_id", "to_node_id"})
+        )
     if collection == "audit_records":
-        return _is_safe_issue_ref(ref) and (
-            len(parts) == 2 or parts[2] in {"audit_type", "created_at", "target_refs", "result", "metadata"}
+        return (
+            len(parts) != 4
+            and _is_safe_issue_ref(ref)
+            and (len(parts) == 2 or parts[2] in {"audit_type", "created_at", "target_refs", "result", "metadata"})
         )
     return False
 
@@ -770,7 +1304,8 @@ def _validate_issue_contract(issue: dict[str, Any]) -> None:
     if path_contract is None:
         raise ValueError("issue path is invalid")
     collection, path_ref, field = path_contract
-    if (collection, field) != (contract.collection, contract.field):
+    allowed_fields = contract.field if isinstance(contract.field, tuple) else (contract.field,)
+    if collection != contract.collection or field not in allowed_fields:
         raise ValueError("issue path does not match code")
     if path_ref is not None and path_ref != issue["subject_ref"]:
         raise ValueError("issue path ref does not match subject_ref")
@@ -814,6 +1349,8 @@ def _issue_path_contract(value: object) -> tuple[str, str | None, str | None] | 
         return (parts[0], parts[1], None)
     if len(parts) == 3:
         return (parts[0], parts[1], parts[2])
+    if len(parts) == 4 and parts[2] == "properties":
+        return (parts[0], parts[1], f"{parts[2]}.{parts[3]}")
     return None
 
 
@@ -859,3 +1396,11 @@ def _json(value: object, field: str) -> None:
         json.dumps(value, sort_keys=True)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be JSON serializable") from exc
+
+
+def _jsonable(value: object) -> bool:
+    try:
+        json.dumps(value, sort_keys=True)
+    except (TypeError, ValueError):
+        return False
+    return True
