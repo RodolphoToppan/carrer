@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections import Counter
 from typing import Any, NamedTuple
 
+from carrer.claims.candidates import career_claim_candidate_id, supporting_fact_ref, supporting_signal_ref
+from carrer.claims.review import (
+    CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
+    CAREER_CLAIM_FROM_CONTRIBUTION,
+    CAREER_CLAIM_SUPPORTED_BY_EVIDENCE,
+    validate_persisted_career_claim,
+)
 from carrer.contributions.analysis import parse_iso8601_with_timezone
 from carrer.contributions.analysis_contracts import ANALYSIS_VERSION, contribution_analysis_id
 from carrer.contributions.analysis_review import (
@@ -16,7 +24,7 @@ from carrer.contributions.analysis_review import (
 from carrer.contributions.service import CONTRIBUTION_SUPPORTED_BY_EVIDENCE
 from carrer.domain.enums import CONFIDENCE_LEVELS, PRIVACY_LEVELS, REVIEW_STATUSES
 from carrer.domain.hashing import stable_hash
-from carrer.domain.identity import canonical_refs
+from carrer.domain.identity import canonical_refs, career_claim_id
 from carrer.domain.validation import validate_contribution
 
 REPORT_TYPE = "graph_integrity"
@@ -69,6 +77,26 @@ ISSUE_CODES = frozenset(
         "CONTRIBUTION_ANALYSIS_EVIDENCE_TYPE_INVALID",
         "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_MISSING",
         "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED",
+        "CAREER_CLAIM_PROPERTIES_INVALID",
+        "CAREER_CLAIM_STATUS_INVALID",
+        "CAREER_CLAIM_PRIVACY_INVALID",
+        "CAREER_CLAIM_CONFIDENCE_INVALID",
+        "CAREER_CLAIM_ANALYSIS_REF_INVALID",
+        "CAREER_CLAIM_ANALYSIS_NOT_FOUND",
+        "CAREER_CLAIM_ANALYSIS_TYPE_INVALID",
+        "CAREER_CLAIM_ANALYSIS_EDGE_MISSING",
+        "CAREER_CLAIM_ANALYSIS_EDGE_UNDECLARED",
+        "CAREER_CLAIM_CONTRIBUTION_REF_INVALID",
+        "CAREER_CLAIM_CONTRIBUTION_NOT_FOUND",
+        "CAREER_CLAIM_CONTRIBUTION_TYPE_INVALID",
+        "CAREER_CLAIM_CONTRIBUTION_EDGE_MISSING",
+        "CAREER_CLAIM_CONTRIBUTION_EDGE_UNDECLARED",
+        "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        "CAREER_CLAIM_EVIDENCE_NOT_FOUND",
+        "CAREER_CLAIM_EVIDENCE_TYPE_INVALID",
+        "CAREER_CLAIM_EVIDENCE_EDGE_MISSING",
+        "CAREER_CLAIM_EVIDENCE_EDGE_UNDECLARED",
+        "CAREER_CLAIM_SUPPORTING_REFS_INVALID",
     }
 )
 
@@ -185,6 +213,62 @@ ISSUE_CONTRACTS = {
     "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
         "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
     ),
+    "CAREER_CLAIM_PROPERTIES_INVALID": _IssueContract("error", "node", "nodes", "properties", "empty", "empty"),
+    "CAREER_CLAIM_STATUS_INVALID": _IssueContract("error", "node", "nodes", "properties.status", "empty", "empty"),
+    "CAREER_CLAIM_PRIVACY_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.privacy_level", "empty", "empty"
+    ),
+    "CAREER_CLAIM_CONFIDENCE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.confidence", "empty", "empty"
+    ),
+    "CAREER_CLAIM_ANALYSIS_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.metadata", "empty", "empty"
+    ),
+    "CAREER_CLAIM_ANALYSIS_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.metadata", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_ANALYSIS_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.metadata", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_ANALYSIS_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.metadata", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_ANALYSIS_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.metadata", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_CONTRIBUTION_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.contribution_refs", "empty", "empty"
+    ),
+    "CAREER_CLAIM_CONTRIBUTION_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.contribution_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_CONTRIBUTION_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.contribution_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_CONTRIBUTION_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.contribution_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_CONTRIBUTION_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.contribution_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_EVIDENCE_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "empty", "empty"
+    ),
+    "CAREER_CLAIM_EVIDENCE_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_EVIDENCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_EVIDENCE_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "CAREER_CLAIM_SUPPORTING_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.metadata", "empty", "empty"
+    ),
 }
 PERSISTED_REF_PREFIXES = (
     "artifact:",
@@ -242,6 +326,7 @@ def validate_graph_integrity(
         issues = _node_issues(nodes, selected_node_types)
         issues.extend(_contribution_issues(nodes, edges, selected_node_types))
         issues.extend(_contribution_analysis_issues(nodes, edges, selected_node_types))
+        issues.extend(_career_claim_issues(nodes, edges, selected_node_types))
         issues.extend(_edge_issues(nodes, edges, selected_node_types))
         issues.extend(_audit_issues(nodes, audit_records, selected_node_types))
         issues = _ordered_issues(_dedupe_issues(issues))
@@ -651,6 +736,206 @@ def _contribution_analysis_node_issues(
     return issues
 
 
+def _career_claim_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None) -> list[dict[str, Any]]:
+    if node_types is not None and "CareerClaim" not in node_types:
+        return []
+    issues: list[dict[str, Any]] = []
+    for key in sorted(nodes, key=_safe_sort_key):
+        node = nodes[key]
+        if not isinstance(node, dict) or node.get("node_type") != "CareerClaim":
+            continue
+        issues.extend(_career_claim_node_issues(nodes, edges, key, node))
+    return issues
+
+
+def _career_claim_node_issues(
+    nodes: dict[Any, Any], edges: list[Any], key: Any, node: dict[str, Any]
+) -> list[dict[str, Any]]:
+    subject = _node_subject_ref(key)
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return []
+
+    path = f"nodes.{subject}.properties"
+    issues: list[dict[str, Any]] = []
+    specific_fields: set[str] = set()
+
+    if props.get("status") != "accepted":
+        specific_fields.add("status")
+        issues.append(_issue("CAREER_CLAIM_STATUS_INVALID", "error", "node", subject, f"{path}.status"))
+    if props.get("privacy_level") not in PRIVACY_LEVELS:
+        specific_fields.add("privacy_level")
+        issues.append(_issue("CAREER_CLAIM_PRIVACY_INVALID", "error", "node", subject, f"{path}.privacy_level"))
+    if props.get("confidence") not in CONFIDENCE_LEVELS:
+        specific_fields.add("confidence")
+        issues.append(_issue("CAREER_CLAIM_CONFIDENCE_INVALID", "error", "node", subject, f"{path}.confidence"))
+
+    metadata = props.get("metadata")
+    analysis_ref = metadata.get("analysis_ref") if isinstance(metadata, dict) else None
+    analysis_node = None
+    if not _safe_text_ref(analysis_ref):
+        specific_fields.add("analysis_ref")
+        issues.append(_issue("CAREER_CLAIM_ANALYSIS_REF_INVALID", "error", "node", subject, f"{path}.metadata"))
+    else:
+        assert isinstance(analysis_ref, str)
+        analysis_node = nodes.get(analysis_ref)
+        issues.extend(
+            _career_claim_single_target_issues(
+                nodes,
+                edges,
+                subject,
+                node.get("id"),
+                analysis_ref,
+                "ContributionAnalysis",
+                CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
+                f"{path}.metadata",
+                "CAREER_CLAIM_ANALYSIS_NOT_FOUND",
+                "CAREER_CLAIM_ANALYSIS_TYPE_INVALID",
+                "CAREER_CLAIM_ANALYSIS_EDGE_MISSING",
+                "CAREER_CLAIM_ANALYSIS_EDGE_UNDECLARED",
+            )
+        )
+
+    contribution_ref = _single_canonical_ref(props.get("contribution_refs"))
+    if contribution_ref is None:
+        specific_fields.add("contribution_refs")
+        issues.append(
+            _issue("CAREER_CLAIM_CONTRIBUTION_REF_INVALID", "error", "node", subject, f"{path}.contribution_refs")
+        )
+    else:
+        issues.extend(
+            _career_claim_single_target_issues(
+                nodes,
+                edges,
+                subject,
+                node.get("id"),
+                contribution_ref,
+                "Contribution",
+                CAREER_CLAIM_FROM_CONTRIBUTION,
+                f"{path}.contribution_refs",
+                "CAREER_CLAIM_CONTRIBUTION_NOT_FOUND",
+                "CAREER_CLAIM_CONTRIBUTION_TYPE_INVALID",
+                "CAREER_CLAIM_CONTRIBUTION_EDGE_MISSING",
+                "CAREER_CLAIM_CONTRIBUTION_EDGE_UNDECLARED",
+            )
+        )
+
+    evidence_refs = props.get("evidence_refs")
+    valid_evidence_refs = _valid_canonical_ref_list(evidence_refs, required=True)
+    if valid_evidence_refs is None:
+        specific_fields.add("evidence_refs")
+        issues.append(_issue("CAREER_CLAIM_EVIDENCE_REFS_INVALID", "error", "node", subject, f"{path}.evidence_refs"))
+    else:
+        issues.extend(_career_claim_evidence_issues(nodes, edges, subject, node.get("id"), valid_evidence_refs, path))
+
+    if not isinstance(metadata, dict) or not _supporting_refs_valid_for_analysis(metadata, analysis_node):
+        specific_fields.add("supporting_refs")
+        issues.append(_issue("CAREER_CLAIM_SUPPORTING_REFS_INVALID", "error", "node", subject, f"{path}.metadata"))
+
+    if _has_residual_career_claim_violation(node, specific_fields):
+        issues.append(_issue("CAREER_CLAIM_PROPERTIES_INVALID", "error", "node", subject, path))
+    return issues
+
+
+def _career_claim_single_target_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    claim_ref: object,
+    declared_ref: str,
+    expected_type: str,
+    edge_type: str,
+    path: str,
+    not_found_code: str,
+    type_invalid_code: str,
+    edge_missing_code: str,
+    edge_undeclared_code: str,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    related = [_safe_issue_ref(declared_ref, fallback_prefix="provenance_ref:")]
+    target = nodes.get(declared_ref)
+    target_is_valid = isinstance(target, dict) and target.get("node_type") == expected_type
+    if target is None:
+        issues.append(_issue(not_found_code, "warning", "node", subject, path, related_refs=related))
+    elif not target_is_valid:
+        issues.append(_issue(type_invalid_code, "error", "node", subject, path, related_refs=related))
+    elif not _has_edge(edges, edge_type, claim_ref, declared_ref):
+        issues.append(_issue(edge_missing_code, "warning", "node", subject, path, related_refs=related))
+    for target_ref in _edge_targets(edges, edge_type, claim_ref):
+        if target_ref != declared_ref:
+            issues.append(
+                _issue(
+                    edge_undeclared_code,
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=[_safe_issue_ref(target_ref, fallback_prefix="edge_endpoint:")],
+                )
+            )
+    return issues
+
+
+def _career_claim_evidence_issues(
+    nodes: dict[Any, Any], edges: list[Any], subject: str, claim_ref: object, evidence_refs: list[str], path: str
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    valid_targets = []
+    for ref in evidence_refs:
+        related = [_safe_issue_ref(ref, fallback_prefix="provenance_ref:")]
+        evidence = nodes.get(ref)
+        if evidence is None:
+            issues.append(
+                _issue(
+                    "CAREER_CLAIM_EVIDENCE_NOT_FOUND",
+                    "warning",
+                    "node",
+                    subject,
+                    f"{path}.evidence_refs",
+                    related_refs=related,
+                )
+            )
+        elif not isinstance(evidence, dict) or evidence.get("node_type") != "EvidenceNode":
+            issues.append(
+                _issue(
+                    "CAREER_CLAIM_EVIDENCE_TYPE_INVALID",
+                    "error",
+                    "node",
+                    subject,
+                    f"{path}.evidence_refs",
+                    related_refs=related,
+                )
+            )
+        else:
+            valid_targets.append(ref)
+    edge_targets = _edge_targets(edges, CAREER_CLAIM_SUPPORTED_BY_EVIDENCE, claim_ref)
+    for ref in valid_targets:
+        if ref not in edge_targets:
+            issues.append(
+                _issue(
+                    "CAREER_CLAIM_EVIDENCE_EDGE_MISSING",
+                    "warning",
+                    "node",
+                    subject,
+                    f"{path}.evidence_refs",
+                    related_refs=[_safe_issue_ref(ref, fallback_prefix="provenance_ref:")],
+                )
+            )
+    for target in edge_targets:
+        if target not in evidence_refs:
+            issues.append(
+                _issue(
+                    "CAREER_CLAIM_EVIDENCE_EDGE_UNDECLARED",
+                    "warning",
+                    "node",
+                    subject,
+                    f"{path}.evidence_refs",
+                    related_refs=[_safe_issue_ref(target, fallback_prefix="edge_endpoint:")],
+                )
+            )
+    return issues
+
+
 def _edge_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     valid_node_ids = {key for key, node in nodes.items() if isinstance(key, str) and isinstance(node, dict)}
@@ -719,6 +1004,152 @@ def _edge_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] 
             )
         )
     return issues
+
+
+def _safe_text_ref(value: object) -> bool:
+    if not isinstance(value, str) or not value or value.strip() != value:
+        return False
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        return False
+    prefix, separator, suffix = value.partition(":")
+    return separator == ":" and bool(prefix) and _HASH_RE.fullmatch(suffix) is not None
+
+
+def _single_canonical_ref(value: object) -> str | None:
+    refs = _valid_canonical_ref_list(value, required=True)
+    if refs is None or len(refs) != 1:
+        return None
+    return refs[0]
+
+
+def _valid_canonical_ref_list(value: object, *, required: bool) -> list[str] | None:
+    if not isinstance(value, list) or (required and not value):
+        return None
+    if any(not isinstance(ref, str) or not ref.strip() for ref in value):
+        return None
+    if any(not _safe_text_ref(ref) for ref in value):
+        return None
+    if value != sorted(set(value)):
+        return None
+    return value
+
+
+def _supporting_refs_valid_for_analysis(metadata: dict[str, Any], analysis_node: object) -> bool:
+    fact_refs = _valid_canonical_ref_list(metadata.get("supporting_fact_refs"), required=False)
+    signal_refs = _valid_canonical_ref_list(metadata.get("supporting_signal_refs"), required=False)
+    if fact_refs is None or signal_refs is None or not fact_refs + signal_refs:
+        return False
+    if any(not ref.startswith("analysis_fact:") for ref in fact_refs):
+        return False
+    if any(not ref.startswith("analysis_signal:") for ref in signal_refs):
+        return False
+    if not isinstance(analysis_node, dict) or analysis_node.get("node_type") != "ContributionAnalysis":
+        return True
+    props = analysis_node.get("properties")
+    if not isinstance(props, dict):
+        return True
+    expected_facts = _analysis_supporting_refs(
+        props.get("action_facts"), supporting_fact_ref
+    ) | _analysis_supporting_refs(props.get("outcome_facts"), supporting_fact_ref)
+    expected_signals = _analysis_supporting_refs(props.get("impact_signals"), supporting_signal_ref)
+    return set(fact_refs).issubset(expected_facts) and set(signal_refs).issubset(expected_signals)
+
+
+def _analysis_supporting_refs(values: object, ref_func: Any) -> set[str]:
+    if not isinstance(values, list):
+        return set()
+    return {ref_func(item) for item in values if isinstance(item, dict) and _jsonable(item)}
+
+
+def _has_residual_career_claim_violation(node: dict[str, Any], specific_fields: set[str]) -> bool:
+    candidate = copy.deepcopy(node)
+    props = candidate.get("properties")
+    if not isinstance(props, dict):
+        return False
+    if _career_claim_identity_mismatch(candidate, props, specific_fields):
+        return True
+    metadata = props.get("metadata")
+    if not isinstance(metadata, dict):
+        props["metadata"] = metadata = {
+            "analysis_ref": f"contribution_analysis:{'0' * 64}",
+            "candidate_id": f"career_claim_candidate:{'0' * 64}",
+            "candidate_status": "proposed",
+            "candidate_version": "v1",
+            "supporting_fact_refs": [f"analysis_fact:{'0' * 64}"],
+            "supporting_signal_refs": [],
+            "reasons": [],
+            "warnings": [],
+            "candidate_metadata": {"candidate_version": "v1"},
+        }
+    if "status" in specific_fields:
+        props["status"] = "accepted"
+    if "privacy_level" in specific_fields:
+        props["privacy_level"] = "private"
+    if "confidence" in specific_fields:
+        props["confidence"] = "medium"
+    if "analysis_ref" in specific_fields:
+        metadata["analysis_ref"] = f"contribution_analysis:{'0' * 64}"
+    if "contribution_refs" in specific_fields:
+        props["contribution_refs"] = [f"contribution:{'0' * 64}"]
+    if "evidence_refs" in specific_fields:
+        props["evidence_refs"] = [f"evidence:{'0' * 64}"]
+    if "supporting_refs" in specific_fields:
+        metadata["supporting_fact_refs"] = [f"analysis_fact:{'0' * 64}"]
+        metadata["supporting_signal_refs"] = []
+    _refresh_career_claim_identity(candidate)
+    try:
+        validate_persisted_career_claim(candidate)
+    except ValueError:
+        return True
+    return False
+
+
+def _career_claim_identity_mismatch(node: dict[str, Any], props: dict[str, Any], specific_fields: set[str]) -> bool:
+    if specific_fields.intersection({"contribution_refs", "evidence_refs"}):
+        return False
+    if not isinstance(props.get("claim_type"), str) or not isinstance(props.get("statement"), str):
+        return False
+    contribution_refs = props.get("contribution_refs")
+    evidence_refs = props.get("evidence_refs")
+    if not isinstance(contribution_refs, list) or not isinstance(evidence_refs, list):
+        return False
+    if any(not isinstance(ref, str) for ref in [*contribution_refs, *evidence_refs]):
+        return False
+    expected = career_claim_id(props["claim_type"], props["statement"], contribution_refs, [], evidence_refs)
+    return node.get("id") != expected
+
+
+def _refresh_career_claim_identity(node: dict[str, Any]) -> None:
+    props = node.get("properties")
+    if not isinstance(props, dict) or not isinstance(props.get("metadata"), dict):
+        return
+    metadata = props["metadata"]
+    candidate_metadata = metadata.get("candidate_metadata")
+    candidate_version = candidate_metadata.get("candidate_version") if isinstance(candidate_metadata, dict) else None
+    if not all(
+        isinstance(value, str)
+        for value in (
+            props.get("claim_type"),
+            metadata.get("analysis_ref"),
+            candidate_version,
+        )
+    ):
+        return
+    assert isinstance(candidate_version, str)
+    fact_refs = metadata.get("supporting_fact_refs")
+    signal_refs = metadata.get("supporting_signal_refs")
+    if not isinstance(fact_refs, list) or not isinstance(signal_refs, list):
+        return
+    metadata["candidate_id"] = career_claim_candidate_id(
+        props["claim_type"], metadata["analysis_ref"], [*fact_refs, *signal_refs], candidate_version
+    )
+    if not isinstance(props.get("statement"), str):
+        return
+    contribution_refs = props.get("contribution_refs")
+    evidence_refs = props.get("evidence_refs")
+    if not isinstance(contribution_refs, list) or not isinstance(evidence_refs, list):
+        return
+    node["id"] = career_claim_id(props["claim_type"], props["statement"], contribution_refs, [], evidence_refs)
 
 
 def _valid_ordered_unique_strings(value: object) -> bool:
@@ -1269,11 +1700,14 @@ def _is_valid_issue_path(value: object) -> bool:
         return parts[2] == "properties" and parts[3] in {
             "status",
             "privacy_level",
+            "confidence",
             "contribution_ref",
+            "contribution_refs",
             "evidence_refs",
             "observation_refs",
             "knowledge_refs",
             "source_refs",
+            "metadata",
         }
     if collection == "edges":
         return (

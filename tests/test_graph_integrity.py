@@ -6,6 +6,13 @@ from typing import Any
 
 import pytest
 
+from carrer.claims import (
+    CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
+    CAREER_CLAIM_FROM_CONTRIBUTION,
+    CAREER_CLAIM_SUPPORTED_BY_EVIDENCE,
+    accept_career_claim_candidate,
+    generate_career_claim_candidates,
+)
 from carrer.contributions import (
     accept_contribution_analysis,
     analyze_contribution,
@@ -126,6 +133,13 @@ def _analysis_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, dict[str
     analysis = analyze_contribution(store, contribution["id"])
     accepted = accept_contribution_analysis(store, analysis, decision_actor="human", decided_at=NOW)["analysis"]
     return store, contribution, accepted
+
+
+def _claim_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    store, contribution, analysis = _analysis_store(evidence_count)
+    candidate = generate_career_claim_candidates(store, analysis["id"])[0]
+    claim = accept_career_claim_candidate(store, candidate, decision_actor="human", decided_at=NOW)["claim"]
+    return store, contribution, analysis, claim
 
 
 def _api_contribution_store() -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
@@ -877,6 +891,398 @@ def test_contribution_and_analysis_semantic_filters_are_cumulative() -> None:
     assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in both_codes
 
 
+def test_persisted_career_claim_created_by_current_apis_has_no_claim_issues() -> None:
+    store, _, _, _ = _claim_store(evidence_count=2)
+
+    assert all(not code.startswith("CAREER_CLAIM_") for code in _codes(validate_graph_integrity(store)))
+
+
+def test_full_contribution_analysis_claim_flow_has_no_domain_issues() -> None:
+    store, _, _, _ = _claim_store(evidence_count=2)
+    domain_prefixes = ("CONTRIBUTION_", "CONTRIBUTION_ANALYSIS_", "CAREER_CLAIM_")
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert [code for code in codes if code.startswith(domain_prefixes)] == []
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]].__setitem__("properties", []),
+            "NODE_PROPERTIES_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__("status", "rejected"),
+            "CAREER_CLAIM_STATUS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__(
+                "privacy_level", "public"
+            ),
+            "CAREER_CLAIM_PRIVACY_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__("confidence", "certain"),
+            "CAREER_CLAIM_CONFIDENCE_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__("statement", ""),
+            "CAREER_CLAIM_PROPERTIES_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"]["metadata"].__setitem__(
+                "analysis_ref", []
+            ),
+            "CAREER_CLAIM_ANALYSIS_REF_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"]["metadata"].__setitem__(
+                "analysis_ref", "customer:SECRET analysis"
+            ),
+            "CAREER_CLAIM_ANALYSIS_REF_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes.pop(
+                store.nodes[claim["id"]]["properties"]["metadata"]["analysis_ref"]
+            ),
+            "CAREER_CLAIM_ANALYSIS_NOT_FOUND",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[
+                store.nodes[claim["id"]]["properties"]["metadata"]["analysis_ref"]
+            ].__setitem__("node_type", "Contribution"),
+            "CAREER_CLAIM_ANALYSIS_TYPE_INVALID",
+        ),
+        (
+            lambda store, _claim, _analysis: store.edges.__setitem__(
+                slice(None),
+                [edge for edge in store.edges if edge["edge_type"] != CAREER_CLAIM_DERIVED_FROM_ANALYSIS],
+            ),
+            "CAREER_CLAIM_ANALYSIS_EDGE_MISSING",
+        ),
+        (
+            lambda store, claim, _analysis: store.edges.append(
+                _edge(
+                    CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
+                    claim["id"],
+                    "contribution_analysis:" + stable_hash("undeclared analysis"),
+                )
+            ),
+            "CAREER_CLAIM_ANALYSIS_EDGE_UNDECLARED",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__(
+                "contribution_refs", [{}]
+            ),
+            "CAREER_CLAIM_CONTRIBUTION_REF_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes.pop(
+                store.nodes[claim["id"]]["properties"]["contribution_refs"][0]
+            ),
+            "CAREER_CLAIM_CONTRIBUTION_NOT_FOUND",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[
+                store.nodes[claim["id"]]["properties"]["contribution_refs"][0]
+            ].__setitem__("node_type", "EvidenceNode"),
+            "CAREER_CLAIM_CONTRIBUTION_TYPE_INVALID",
+        ),
+        (
+            lambda store, _claim, _analysis: store.edges.__setitem__(
+                slice(None),
+                [edge for edge in store.edges if edge["edge_type"] != CAREER_CLAIM_FROM_CONTRIBUTION],
+            ),
+            "CAREER_CLAIM_CONTRIBUTION_EDGE_MISSING",
+        ),
+        (
+            lambda store, claim, _analysis: store.edges.append(
+                _edge(CAREER_CLAIM_FROM_CONTRIBUTION, claim["id"], "contribution:" + stable_hash("undeclared"))
+            ),
+            "CAREER_CLAIM_CONTRIBUTION_EDGE_UNDECLARED",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__("evidence_refs", {}),
+            "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__("evidence_refs", [[]]),
+            "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__(
+                "evidence_refs", [SensitiveNonJsonValue()]
+            ),
+            "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__("evidence_refs", [None]),
+            "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__(
+                "evidence_refs", ["   "]
+            ),
+            "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"].__setitem__(
+                "evidence_refs", [store.nodes[claim["id"]]["properties"]["evidence_refs"][0], object()]
+            ),
+            "CAREER_CLAIM_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes.pop(store.nodes[claim["id"]]["properties"]["evidence_refs"][0]),
+            "CAREER_CLAIM_EVIDENCE_NOT_FOUND",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[
+                store.nodes[claim["id"]]["properties"]["evidence_refs"][0]
+            ].__setitem__("node_type", "Contribution"),
+            "CAREER_CLAIM_EVIDENCE_TYPE_INVALID",
+        ),
+        (
+            lambda store, _claim, _analysis: store.edges.__setitem__(
+                slice(None),
+                [edge for edge in store.edges if edge["edge_type"] != CAREER_CLAIM_SUPPORTED_BY_EVIDENCE],
+            ),
+            "CAREER_CLAIM_EVIDENCE_EDGE_MISSING",
+        ),
+        (
+            lambda store, claim, _analysis: store.edges.append(
+                _edge(CAREER_CLAIM_SUPPORTED_BY_EVIDENCE, claim["id"], "evidence:" + stable_hash("undeclared"))
+            ),
+            "CAREER_CLAIM_EVIDENCE_EDGE_UNDECLARED",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"]["metadata"].__setitem__(
+                "supporting_fact_refs", ["analysis_fact:" + stable_hash("missing")]
+            ),
+            "CAREER_CLAIM_SUPPORTING_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]]["properties"]["metadata"].__setitem__(
+                "supporting_signal_refs", [None]
+            ),
+            "CAREER_CLAIM_SUPPORTING_REFS_INVALID",
+        ),
+        (
+            lambda store, claim, _analysis: store.nodes[claim["id"]].__setitem__(
+                "id", "career_claim:" + stable_hash("wrong")
+            ),
+            "CAREER_CLAIM_PROPERTIES_INVALID",
+        ),
+    ],
+)
+def test_career_claim_semantic_issues_are_reported(mutate: Any, code: str) -> None:
+    store, _, analysis, claim = _claim_store(evidence_count=2)
+
+    mutate(store, claim, analysis)
+
+    report = validate_graph_integrity(store)
+    assert code in _codes(report)
+    assert validate_graph_integrity_report(report) is report
+    assert "SECRET" not in json.dumps(report, sort_keys=True)
+
+
+def test_career_claim_specific_failures_do_not_cascade() -> None:
+    missing, _, _, missing_claim = _claim_store()
+    missing.nodes.pop(missing.nodes[missing_claim["id"]]["properties"]["metadata"]["analysis_ref"])
+    missing_codes = _codes(validate_graph_integrity(missing))
+    assert "CAREER_CLAIM_ANALYSIS_NOT_FOUND" in missing_codes
+    assert "CAREER_CLAIM_ANALYSIS_EDGE_MISSING" not in missing_codes
+
+    wrong_type, _, _, wrong_claim = _claim_store()
+    wrong_type.nodes[wrong_type.nodes[wrong_claim["id"]]["properties"]["evidence_refs"][0]]["node_type"] = (
+        "Contribution"
+    )
+    wrong_type_codes = _codes(validate_graph_integrity(wrong_type))
+    assert "CAREER_CLAIM_EVIDENCE_TYPE_INVALID" in wrong_type_codes
+    assert "CAREER_CLAIM_EVIDENCE_EDGE_MISSING" not in wrong_type_codes
+
+    isolated, _, _, isolated_claim = _claim_store()
+    isolated.nodes[isolated_claim["id"]]["properties"]["status"] = "rejected"
+    isolated_codes = _codes(validate_graph_integrity(isolated))
+    assert "CAREER_CLAIM_STATUS_INVALID" in isolated_codes
+    assert "CAREER_CLAIM_PROPERTIES_INVALID" not in isolated_codes
+
+    residual, _, _, residual_claim = _claim_store()
+    residual.nodes[residual_claim["id"]]["properties"].update({"status": "rejected", "statement": ""})
+    residual_codes = _codes(validate_graph_integrity(residual))
+    assert "CAREER_CLAIM_STATUS_INVALID" in residual_codes
+    assert "CAREER_CLAIM_PROPERTIES_INVALID" in residual_codes
+
+
+@pytest.mark.parametrize(
+    ("field", "edge_type", "not_found_code", "type_invalid_code", "missing_code", "undeclared_code", "node_type"),
+    [
+        (
+            "analysis",
+            CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
+            "CAREER_CLAIM_ANALYSIS_NOT_FOUND",
+            "CAREER_CLAIM_ANALYSIS_TYPE_INVALID",
+            "CAREER_CLAIM_ANALYSIS_EDGE_MISSING",
+            "CAREER_CLAIM_ANALYSIS_EDGE_UNDECLARED",
+            "ContributionAnalysis",
+        ),
+        (
+            "contribution",
+            CAREER_CLAIM_FROM_CONTRIBUTION,
+            "CAREER_CLAIM_CONTRIBUTION_NOT_FOUND",
+            "CAREER_CLAIM_CONTRIBUTION_TYPE_INVALID",
+            "CAREER_CLAIM_CONTRIBUTION_EDGE_MISSING",
+            "CAREER_CLAIM_CONTRIBUTION_EDGE_UNDECLARED",
+            "Contribution",
+        ),
+    ],
+)
+@pytest.mark.parametrize("declared_target_state", ["missing", "wrong_type"])
+def test_career_claim_declared_single_target_failure_still_reports_undeclared_edge(
+    field: str,
+    edge_type: str,
+    not_found_code: str,
+    type_invalid_code: str,
+    missing_code: str,
+    undeclared_code: str,
+    node_type: str,
+    declared_target_state: str,
+) -> None:
+    store, _, _, claim = _claim_store()
+    props = store.nodes[claim["id"]]["properties"]
+    declared_ref = props["metadata"]["analysis_ref"] if field == "analysis" else props["contribution_refs"][0]
+    alternate_ref = f"{declared_ref.split(':', maxsplit=1)[0]}:{stable_hash(field + declared_target_state)}"
+    store.nodes[alternate_ref] = _node(alternate_ref, node_type)
+    store.edges.append(_edge(edge_type, claim["id"], alternate_ref))
+    store.edges.append({"edge_type": edge_type, "from_node_id": claim["id"], "to_node_id": "customer:SECRET target"})
+    if declared_target_state == "missing":
+        store.nodes.pop(declared_ref)
+        expected = not_found_code
+        unexpected = type_invalid_code
+    else:
+        store.nodes[declared_ref]["node_type"] = "EvidenceNode"
+        expected = type_invalid_code
+        unexpected = not_found_code
+    before = _snapshot(store)
+
+    first = validate_graph_integrity(store)
+    second = validate_graph_integrity(store)
+    reordered = JsonGraphStorage()
+    reordered.nodes = copy.deepcopy(store.nodes)
+    reordered.edges = list(reversed(copy.deepcopy(store.edges)))
+    reordered.audit_records = copy.deepcopy(store.audit_records)
+    codes = _codes(first)
+    report_json = json.dumps(first, sort_keys=True)
+    undeclared = [issue for issue in first["issues"] if issue["code"] == undeclared_code]
+
+    assert first == second
+    assert first == validate_graph_integrity(reordered)
+    assert expected in codes
+    assert undeclared_code in codes
+    assert missing_code not in codes
+    assert unexpected not in codes
+    assert "EDGE_TARGET_NOT_FOUND" in codes
+    assert "SECRET" not in report_json
+    assert "customer:SECRET target" not in report_json
+    assert all(
+        ref.startswith(("edge_endpoint:", "contribution_analysis:", "contribution:"))
+        for issue in undeclared
+        for ref in issue["related_refs"]
+    )
+    assert validate_graph_integrity_report(first) is first
+    assert _snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    ("edge_type", "semantic_code"),
+    [
+        (CAREER_CLAIM_DERIVED_FROM_ANALYSIS, "CAREER_CLAIM_ANALYSIS_EDGE_UNDECLARED"),
+        (CAREER_CLAIM_FROM_CONTRIBUTION, "CAREER_CLAIM_CONTRIBUTION_EDGE_UNDECLARED"),
+        (CAREER_CLAIM_SUPPORTED_BY_EVIDENCE, "CAREER_CLAIM_EVIDENCE_EDGE_UNDECLARED"),
+    ],
+)
+@pytest.mark.parametrize("target", [{}, [], object(), None, "", "   "])
+def test_career_claim_edges_with_non_textual_targets_are_structural_only(
+    edge_type: str,
+    semantic_code: str,
+    target: object,
+) -> None:
+    store, _, _, claim = _claim_store()
+    store.edges.append({"edge_type": edge_type, "from_node_id": claim["id"], "to_node_id": target})
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+
+    assert "EDGE_TARGET_REF_INVALID" in _codes(report)
+    assert semantic_code not in _codes(report)
+    assert "object at" not in report_json
+    assert "builtins.object" not in report_json
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_career_claim_filters_order_read_only_json_privacy_and_severity() -> None:
+    store, contribution, analysis, claim = _claim_store(evidence_count=2)
+    contribution["properties"]["status"] = "done"
+    store.nodes[analysis["id"]]["properties"]["status"] = "rejected"
+    store.nodes[claim["id"]]["properties"]["status"] = "rejected"
+    store.nodes[claim["id"]]["properties"]["statement"] = "SECRET customer statement"
+    before = _snapshot(store)
+
+    contribution_only = _codes(validate_graph_integrity(store, node_types=["Contribution"]))
+    analysis_only = _codes(validate_graph_integrity(store, node_types=["ContributionAnalysis"]))
+    claim_only = _codes(validate_graph_integrity(store, node_types=["CareerClaim"]))
+    combined = _codes(
+        validate_graph_integrity(store, node_types=["Contribution", "ContributionAnalysis", "CareerClaim"])
+    )
+    warnings_only = validate_graph_integrity(store, severities=["warning"])
+    first = validate_graph_integrity(store)
+    reordered = JsonGraphStorage()
+    reordered.nodes = dict(reversed(list(copy.deepcopy(store.nodes).items())))
+    reordered.edges = list(reversed(copy.deepcopy(store.edges)))
+    reordered.audit_records = list(reversed(copy.deepcopy(store.audit_records)))
+
+    assert "CONTRIBUTION_STATUS_INVALID" in contribution_only
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" not in contribution_only
+    assert "CAREER_CLAIM_STATUS_INVALID" not in contribution_only
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in analysis_only
+    assert "CAREER_CLAIM_STATUS_INVALID" in claim_only
+    assert "CONTRIBUTION_STATUS_INVALID" in combined
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in combined
+    assert "CAREER_CLAIM_STATUS_INVALID" in combined
+    assert all(issue["severity"] == "warning" for issue in warnings_only["issues"])
+    assert first == validate_graph_integrity(reordered)
+    assert json.loads(json.dumps(first)) == first
+    assert _snapshot(store) == before
+    assert "SECRET customer statement" not in json.dumps(first, sort_keys=True)
+
+
+def test_invalid_claim_does_not_create_contribution_or_analysis_false_positive() -> None:
+    store, _, _, claim = _claim_store()
+    store.nodes[claim["id"]]["properties"]["status"] = "rejected"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "CAREER_CLAIM_STATUS_INVALID" in codes
+    assert all(not code.startswith("CONTRIBUTION_") for code in codes)
+    assert all(not code.startswith("CONTRIBUTION_ANALYSIS_") for code in codes)
+
+
+def test_contribution_analysis_and_claim_invalid_issues_coexist() -> None:
+    store, contribution, analysis, claim = _claim_store()
+    contribution["properties"]["status"] = "done"
+    store.nodes[analysis["id"]]["properties"]["status"] = "rejected"
+    store.nodes[claim["id"]]["properties"]["status"] = "rejected"
+
+    report = validate_graph_integrity(store)
+    codes = _codes(report)
+
+    assert "CONTRIBUTION_STATUS_INVALID" in codes
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in codes
+    assert "CAREER_CLAIM_STATUS_INVALID" in codes
+    assert validate_graph_integrity_report(report) is report
+
+
 def test_audit_target_refs_rules_are_conservative() -> None:
     store = _store()
     store.audit_records = [
@@ -1546,9 +1952,13 @@ def test_issue_contract_table_matches_issue_codes() -> None:
 def test_all_generated_issue_contracts_are_accepted() -> None:
     store = _store()
     valid_analysis_store, contribution, accepted = _analysis_store()
+    valid_claim_store, _, _, claim = _claim_store(evidence_count=2)
     store.nodes.update(copy.deepcopy(valid_analysis_store.nodes))
+    store.nodes.update(copy.deepcopy(valid_claim_store.nodes))
     store.edges.extend(copy.deepcopy(valid_analysis_store.edges))
+    store.edges.extend(copy.deepcopy(valid_claim_store.edges))
     store.audit_records.extend(copy.deepcopy(valid_analysis_store.audit_records))
+    store.audit_records.extend(copy.deepcopy(valid_claim_store.audit_records))
 
     safe_evidence = f"evidence:{HASH}"
     extra_evidence = f"evidence:{OTHER_HASH}"
@@ -1625,6 +2035,35 @@ def test_all_generated_issue_contracts_are_accepted() -> None:
     )
     store.nodes[invalid_refs["id"]] = invalid_refs
 
+    claim_bad_contract = copy.deepcopy(claim)
+    claim_bad_contract["id"] = "career_claim:" + stable_hash("bad claim contract")
+    claim_bad_contract["properties"].update(
+        status="rejected", privacy_level="public", confidence="certain", statement=""
+    )
+    store.nodes[claim_bad_contract["id"]] = claim_bad_contract
+
+    claim_invalid_refs = copy.deepcopy(claim)
+    claim_invalid_refs["id"] = "career_claim:" + stable_hash("invalid claim refs")
+    claim_invalid_refs["properties"]["metadata"]["analysis_ref"] = []
+    claim_invalid_refs["properties"]["metadata"]["supporting_signal_refs"] = [None]
+    claim_invalid_refs["properties"]["contribution_refs"] = [[]]
+    claim_invalid_refs["properties"]["evidence_refs"] = [SensitiveNonJsonValue()]
+    store.nodes[claim_invalid_refs["id"]] = claim_invalid_refs
+
+    claim_missing_refs = copy.deepcopy(claim)
+    claim_missing_refs["id"] = "career_claim:" + stable_hash("missing claim refs")
+    claim_missing_refs["properties"]["metadata"]["analysis_ref"] = f"contribution_analysis:{'f' * 64}"
+    claim_missing_refs["properties"]["contribution_refs"] = [f"contribution:{'f' * 64}"]
+    claim_missing_refs["properties"]["evidence_refs"] = [f"evidence:{'f' * 64}"]
+    store.nodes[claim_missing_refs["id"]] = claim_missing_refs
+
+    claim_type_invalid = copy.deepcopy(claim)
+    claim_type_invalid["id"] = "career_claim:" + stable_hash("type invalid claim refs")
+    claim_type_invalid["properties"]["metadata"]["analysis_ref"] = contribution["id"]
+    claim_type_invalid["properties"]["contribution_refs"] = [claim["properties"]["evidence_refs"][0]]
+    claim_type_invalid["properties"]["evidence_refs"] = [contribution["id"]]
+    store.nodes[claim_type_invalid["id"]] = claim_type_invalid
+
     store.nodes["bad"] = []
     store.nodes[f"knowledge:{HASH}"] = _node(f"observation:{HASH}")
     store.nodes["evidence:a"]["id"] = ""
@@ -1643,6 +2082,12 @@ def test_all_generated_issue_contracts_are_accepted() -> None:
     ]
     store.edges.append(_edge(CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, accepted["id"], f"contribution:{OTHER_HASH}"))
     store.edges.append(_edge(CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, accepted["id"], f"evidence:{OTHER_HASH}"))
+    store.edges = [
+        edge for edge in store.edges if not isinstance(edge, dict) or edge.get("from_node_id") != claim["id"]
+    ]
+    store.edges.append(_edge(CAREER_CLAIM_DERIVED_FROM_ANALYSIS, claim["id"], accepted["id"]))
+    store.edges.append(_edge(CAREER_CLAIM_FROM_CONTRIBUTION, claim["id"], f"contribution:{HASH}"))
+    store.edges.append(_edge(CAREER_CLAIM_SUPPORTED_BY_EVIDENCE, claim["id"], extra_evidence))
     store.audit_records = [
         [],
         {"audit_type": "", "created_at": "bad", "target_refs": [None], "result": "", "metadata": []},
@@ -1896,17 +2341,15 @@ def test_report_does_not_copy_secret_from_key_node_id_edge_endpoint_or_audit_tar
 
 
 def test_complete_claim_export_flow_shape_has_no_structural_false_positives() -> None:
-    store, _, analysis = _analysis_store()
+    store, _, _, claim = _claim_store()
     ids = [
-        ("career_claim:a", "CareerClaim"),
         ("artifact:a", "ProfessionalArtifact"),
         ("artifact_export_receipt:a", "ArtifactExportReceipt"),
     ]
     store.nodes.update({node_id: _node(node_id, node_type) for node_id, node_type in ids})
     store.edges.extend(
         [
-            _edge("CAREER_CLAIM_FROM_ANALYSIS", "career_claim:a", analysis["id"]),
-            _edge("PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM", "artifact:a", "career_claim:a"),
+            _edge("PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM", "artifact:a", claim["id"]),
             _edge("ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT", "artifact_export_receipt:a", "artifact:a"),
         ]
     )
@@ -1914,4 +2357,4 @@ def test_complete_claim_export_flow_shape_has_no_structural_false_positives() ->
         _audit("artifact_export_receipt:a", "claim_based_artifact_export_candidate:in-memory"),
     ]
 
-    assert validate_graph_integrity(store)["issues"] == []
+    assert [code for code in _codes(validate_graph_integrity(store)) if code.startswith("CAREER_CLAIM_")] == []
