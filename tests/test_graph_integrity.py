@@ -6,7 +6,20 @@ from typing import Any
 
 import pytest
 
+from carrer.contributions import (
+    accept_contribution_analysis,
+    analyze_contribution,
+    create_contribution,
+    promote_contribution_candidate,
+)
+from carrer.contributions.analysis_review import (
+    CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION,
+    CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE,
+)
+from carrer.contributions.candidates import contribution_candidate
+from carrer.contributions.service import CONTRIBUTION_SUPPORTED_BY_EVIDENCE
 from carrer.domain.hashing import stable_hash
+from carrer.domain.models import evidence_node
 from carrer.integrity import (
     graph_integrity_report_id,
     validate_graph_integrity,
@@ -26,10 +39,30 @@ class SensitiveNonJsonValue:
 
 
 def _node(node_id: str, node_type: str = "EvidenceNode") -> dict[str, Any]:
-    return {"id": node_id, "node_type": node_type, "created_at": NOW, "properties": {}}
+    properties: dict[str, Any] = {}
+    if node_type == "Contribution":
+        properties = {
+            "title": "Safe title",
+            "summary": "",
+            "status": "draft",
+            "privacy_level": "artifact_safe",
+            "confidence": "medium",
+            "evidence_refs": ["evidence:a"],
+            "observation_refs": [],
+            "knowledge_refs": [],
+            "source_refs": [],
+            "started_at": None,
+            "ended_at": None,
+            "metadata": {},
+        }
+    return {"id": node_id, "node_type": node_type, "created_at": NOW, "properties": properties}
 
 
-def _edge(edge_type: str = "SUPPORTS", source: str = "evidence:a", target: str = "contribution:a") -> dict[str, Any]:
+def _edge(
+    edge_type: str = CONTRIBUTION_SUPPORTED_BY_EVIDENCE,
+    source: str = "contribution:a",
+    target: str = "evidence:a",
+) -> dict[str, Any]:
     return {
         "id": f"edge:{edge_type}:{source}:{target}",
         "edge_type": edge_type,
@@ -61,6 +94,52 @@ def _store() -> JsonGraphStorage:
     store.edges = [_edge()]
     store.audit_records = [_audit("contribution:a", "evidence:a")]
     return store
+
+
+def _real_evidence(entity_id: str = "C-1", *, privacy_level: str = "artifact_safe") -> dict[str, Any]:
+    return evidence_node(
+        source_id="test",
+        source_entity_type="commit",
+        source_entity_id=entity_id,
+        evidence_type="COMMIT_EXISTS",
+        captured_at=NOW,
+        occurred_at=NOW,
+        privacy_level=privacy_level,
+        metadata={"repository": "repo"},
+    )
+
+
+def _analysis_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
+    store = JsonGraphStorage()
+    evidence = [_real_evidence(f"C-{index}") for index in range(evidence_count)]
+    for node in evidence:
+        store.create_node(node)
+    contribution = create_contribution(
+        store,
+        contribution_type="feature_delivery",
+        created_at=NOW,
+        title="Feature delivery",
+        evidence_refs=[node["id"] for node in evidence],
+        actions=["implemented change"],
+        outcomes=["change delivered"],
+    )["contribution"]
+    analysis = analyze_contribution(store, contribution["id"])
+    accepted = accept_contribution_analysis(store, analysis, decision_actor="human", decided_at=NOW)["analysis"]
+    return store, contribution, accepted
+
+
+def _api_contribution_store() -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
+    store = JsonGraphStorage()
+    evidence = _real_evidence("C-1")
+    store.create_node(evidence)
+    contribution = create_contribution(
+        store,
+        contribution_type="feature_delivery",
+        created_at=NOW,
+        title="Safe contribution",
+        evidence_refs=[evidence["id"]],
+    )["contribution"]
+    return store, contribution, evidence
 
 
 def _codes(report: dict[str, Any]) -> list[str]:
@@ -245,6 +324,557 @@ def test_duplicate_edge_is_a_warning_without_repairing_store() -> None:
     assert "DUPLICATE_EDGE" in _codes(report)
     assert report["status"] == "valid"
     assert _snapshot(store) == before
+
+
+def test_valid_contribution_from_creation_api_has_no_semantic_issues() -> None:
+    store, _, _ = _api_contribution_store()
+
+    report = validate_graph_integrity(store)
+
+    assert [code for code in _codes(report) if code.startswith("CONTRIBUTION_")] == []
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_contribution_invalid_properties_are_reported_without_cascade() -> None:
+    store, contribution, _ = _api_contribution_store()
+    contribution["properties"]["title"] = ""
+    contribution["properties"]["summary"] = ""
+
+    report = validate_graph_integrity(store)
+
+    assert _codes(report).count("CONTRIBUTION_PROPERTIES_INVALID") == 1
+    assert "CONTRIBUTION_PROVENANCE_REFS_INVALID" not in _codes(report)
+
+
+def test_contribution_invalid_status_and_privacy_are_specific() -> None:
+    store, contribution, _ = _api_contribution_store()
+    contribution["properties"]["status"] = "done"
+    contribution["properties"]["privacy_level"] = "public"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "CONTRIBUTION_STATUS_INVALID" in codes
+    assert "CONTRIBUTION_PRIVACY_INVALID" in codes
+
+
+@pytest.mark.parametrize("refs", [[{}], [[]], [f"evidence:{HASH}", object()], ["   "]])
+def test_contribution_arbitrary_evidence_refs_are_safe_provenance_issues(refs: list[Any]) -> None:
+    store, contribution, _ = _api_contribution_store()
+    contribution["properties"]["evidence_refs"] = refs
+    before_edges = copy.deepcopy(store.edges)
+    before_audit_records = copy.deepcopy(store.audit_records)
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert "CONTRIBUTION_PROVENANCE_REFS_INVALID" in codes
+    assert "CONTRIBUTION_EVIDENCE_NOT_FOUND" not in codes
+    assert "CONTRIBUTION_EVIDENCE_TYPE_INVALID" not in codes
+    assert "CONTRIBUTION_EVIDENCE_EDGE_MISSING" not in codes
+    assert "object at" not in report_json
+    assert "builtins.object" not in report_json
+    assert validate_graph_integrity_report(report) is report
+    assert contribution["properties"]["evidence_refs"] == refs
+    assert store.edges == before_edges
+    assert store.audit_records == before_audit_records
+
+
+def test_contribution_arbitrary_non_evidence_provenance_refs_do_not_crash() -> None:
+    store, contribution, _ = _api_contribution_store()
+    contribution["properties"].update(
+        observation_refs=[{}],
+        knowledge_refs=[[]],
+        source_refs=[SensitiveNonJsonValue()],
+    )
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+
+    assert _codes(report).count("CONTRIBUTION_PROVENANCE_REFS_INVALID") == 3
+    assert "SensitiveNonJsonValue SECRET" not in report_json
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_contribution_specific_failure_with_residual_error_reports_both() -> None:
+    store, contribution, _ = _api_contribution_store()
+    contribution["properties"]["status"] = "done"
+    contribution["properties"]["confidence"] = "certain"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "CONTRIBUTION_STATUS_INVALID" in codes
+    assert "CONTRIBUTION_PROPERTIES_INVALID" in codes
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda props: props.__setitem__("status", "done"),
+        lambda props: props.__setitem__("privacy_level", "public"),
+        lambda props: props.__setitem__("evidence_refs", [object()]),
+    ],
+)
+def test_contribution_single_specific_failure_does_not_emit_redundant_properties_issue(mutate: Any) -> None:
+    store, contribution, _ = _api_contribution_store()
+    mutate(contribution["properties"])
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert any(
+        code in codes
+        for code in (
+            "CONTRIBUTION_STATUS_INVALID",
+            "CONTRIBUTION_PRIVACY_INVALID",
+            "CONTRIBUTION_PROVENANCE_REFS_INVALID",
+        )
+    )
+    assert "CONTRIBUTION_PROPERTIES_INVALID" not in codes
+
+
+def test_contribution_evidence_ref_missing_node() -> None:
+    store, contribution, _ = _api_contribution_store()
+    missing = f"evidence:{HASH}"
+    contribution["properties"]["evidence_refs"] = [missing]
+    store.edges = []
+
+    issue = _issue_for(validate_graph_integrity(store), "CONTRIBUTION_EVIDENCE_NOT_FOUND")
+
+    assert issue["path"] == f"nodes.{issue['subject_ref']}.properties.evidence_refs"
+    assert issue["related_refs"] == [missing]
+
+
+def test_contribution_evidence_ref_wrong_node_type() -> None:
+    store, contribution, _ = _api_contribution_store()
+    wrong = f"knowledge:{HASH}"
+    store.nodes[wrong] = _node(wrong, "KnowledgeNode")
+    contribution["properties"]["evidence_refs"] = [wrong]
+    store.edges = [_edge(CONTRIBUTION_SUPPORTED_BY_EVIDENCE, contribution["id"], wrong)]
+
+    issue = _issue_for(validate_graph_integrity(store), "CONTRIBUTION_EVIDENCE_TYPE_INVALID")
+
+    assert issue["related_refs"] == [wrong]
+
+
+def test_contribution_declared_evidence_without_edge() -> None:
+    store, _, evidence = _api_contribution_store()
+    store.edges = []
+
+    issue = _issue_for(validate_graph_integrity(store), "CONTRIBUTION_EVIDENCE_EDGE_MISSING")
+
+    assert issue["related_refs"] == [evidence["id"]]
+
+
+def test_contribution_evidence_edge_to_undeclared_evidence() -> None:
+    store, contribution, _ = _api_contribution_store()
+    extra = _real_evidence("C-2")
+    store.create_node(extra)
+    store.create_edge(CONTRIBUTION_SUPPORTED_BY_EVIDENCE, contribution["id"], extra["id"])
+
+    issue = _issue_for(validate_graph_integrity(store), "CONTRIBUTION_EVIDENCE_EDGE_UNDECLARED")
+
+    assert issue["severity"] == "warning"
+    assert issue["related_refs"] == [extra["id"]]
+
+
+def test_contribution_multiple_valid_evidence_refs_have_no_semantic_issues() -> None:
+    store = JsonGraphStorage()
+    first = _real_evidence("C-1")
+    second = _real_evidence("C-2")
+    store.create_node(first)
+    store.create_node(second)
+    create_contribution(
+        store,
+        contribution_type="feature_delivery",
+        created_at=NOW,
+        title="Two evidences",
+        evidence_refs=sorted([second["id"], first["id"]]),
+    )
+
+    assert [code for code in _codes(validate_graph_integrity(store)) if code.startswith("CONTRIBUTION_")] == []
+
+
+def test_contribution_semantic_rules_are_read_only_deterministic_and_respect_filters() -> None:
+    store, contribution, _ = _api_contribution_store()
+    contribution["properties"]["status"] = "done"
+    contribution["properties"]["title"] = "SECRET title"
+    before = _snapshot(store)
+
+    skipped = validate_graph_integrity(store, node_types=["EvidenceNode"])
+    selected = validate_graph_integrity(store, node_types=["Contribution"])
+    warnings = validate_graph_integrity(store, severities=["warning"])
+    reordered = JsonGraphStorage()
+    reordered.nodes = dict(reversed(list(copy.deepcopy(store.nodes).items())))
+    reordered.edges = list(reversed(copy.deepcopy(store.edges)))
+    reordered.audit_records = list(reversed(copy.deepcopy(store.audit_records)))
+
+    assert "CONTRIBUTION_STATUS_INVALID" not in _codes(skipped)
+    assert "CONTRIBUTION_STATUS_INVALID" in _codes(selected)
+    assert all(issue["severity"] == "warning" for issue in warnings["issues"])
+    assert validate_graph_integrity(store) == validate_graph_integrity(reordered)
+    assert _snapshot(store) == before
+    assert "SECRET title" not in json.dumps(selected, sort_keys=True)
+
+
+def test_promoted_contribution_candidate_has_no_semantic_issues() -> None:
+    store = JsonGraphStorage()
+    first = _real_evidence("C-1")
+    second = _real_evidence("C-2")
+    store.create_node(first)
+    store.create_node(second)
+    candidate = contribution_candidate(
+        candidate_type="feature_delivery",
+        title="Promoted candidate",
+        evidence_refs=[first["id"], second["id"]],
+        confidence="medium",
+        reasons=["shared_branch"],
+    )
+
+    promote_contribution_candidate(
+        store,
+        candidate,
+        created_at=NOW,
+        decision_actor="human",
+        contribution_type="feature_delivery",
+        title="Promoted candidate",
+    )
+
+    assert [code for code in _codes(validate_graph_integrity(store)) if code.startswith("CONTRIBUTION_")] == []
+
+
+def test_persisted_contribution_analysis_created_by_current_apis_has_no_issues() -> None:
+    store, _, _ = _analysis_store(evidence_count=2)
+
+    assert all(not code.startswith("CONTRIBUTION_ANALYSIS_") for code in _codes(validate_graph_integrity(store)))
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (
+            lambda store, analysis: store.nodes[analysis["id"]].__setitem__("properties", []),
+            "NODE_PROPERTIES_INVALID",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["id"]]["properties"].__setitem__("status", "rejected"),
+            "CONTRIBUTION_ANALYSIS_STATUS_INVALID",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["id"]]["properties"].__setitem__("privacy_level", "public"),
+            "CONTRIBUTION_ANALYSIS_PRIVACY_INVALID",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["id"]]["properties"].__setitem__("contribution_ref", []),
+            "CONTRIBUTION_ANALYSIS_CONTRIBUTION_REF_INVALID",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["id"]]["properties"].__setitem__(
+                "contribution_ref", "customer:SECRET contribution"
+            ),
+            "CONTRIBUTION_ANALYSIS_CONTRIBUTION_NOT_FOUND",
+        ),
+        (
+            lambda store, analysis: store.nodes.pop(analysis["properties"]["contribution_ref"]),
+            "CONTRIBUTION_ANALYSIS_CONTRIBUTION_NOT_FOUND",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["properties"]["contribution_ref"]].__setitem__(
+                "node_type", "EvidenceNode"
+            ),
+            "CONTRIBUTION_ANALYSIS_CONTRIBUTION_TYPE_INVALID",
+        ),
+        (
+            lambda store, _analysis: store.edges.__setitem__(
+                slice(None),
+                [edge for edge in store.edges if edge["edge_type"] != CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION],
+            ),
+            "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_MISSING",
+        ),
+        (
+            lambda store, analysis: store.edges.append(
+                _edge(
+                    CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION,
+                    analysis["id"],
+                    "contribution:" + stable_hash("undeclared contribution"),
+                )
+            ),
+            "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["id"]]["properties"].__setitem__("evidence_refs", [""]),
+            "CONTRIBUTION_ANALYSIS_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["id"]]["properties"].__setitem__(
+                "evidence_refs", [SensitiveNonJsonValue()]
+            ),
+            "CONTRIBUTION_ANALYSIS_EVIDENCE_REFS_INVALID",
+        ),
+        (
+            lambda store, analysis: store.nodes.pop(analysis["properties"]["evidence_refs"][0]),
+            "CONTRIBUTION_ANALYSIS_EVIDENCE_NOT_FOUND",
+        ),
+        (
+            lambda store, analysis: store.nodes[analysis["properties"]["evidence_refs"][0]].__setitem__(
+                "node_type", "Contribution"
+            ),
+            "CONTRIBUTION_ANALYSIS_EVIDENCE_TYPE_INVALID",
+        ),
+        (
+            lambda store, _analysis: store.edges.__setitem__(
+                slice(None),
+                [edge for edge in store.edges if edge["edge_type"] != CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE],
+            ),
+            "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_MISSING",
+        ),
+        (
+            lambda store, analysis: store.edges.append(
+                _edge(
+                    CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE,
+                    analysis["id"],
+                    "evidence:" + stable_hash("undeclared evidence"),
+                )
+            ),
+            "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED",
+        ),
+    ],
+)
+def test_contribution_analysis_semantic_issues_are_reported(mutate: Any, code: str) -> None:
+    store, _, analysis = _analysis_store(evidence_count=2)
+
+    mutate(store, analysis)
+
+    report = validate_graph_integrity(store)
+    assert code in _codes(report)
+    assert validate_graph_integrity_report(report) is report
+    assert "SECRET" not in json.dumps(report, sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    ("edge_type", "semantic_code"),
+    [
+        (CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED"),
+        (CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED"),
+    ],
+)
+@pytest.mark.parametrize("target", [{}, [], object(), None, "", "   "])
+def test_contribution_analysis_edges_with_non_textual_targets_are_structural_only(
+    edge_type: str,
+    semantic_code: str,
+    target: object,
+) -> None:
+    store, _, analysis = _analysis_store(evidence_count=2)
+    store.edges.append(
+        {
+            "edge_type": edge_type,
+            "from_node_id": analysis["id"],
+            "to_node_id": target,
+        }
+    )
+    before = _snapshot(store)
+
+    first = validate_graph_integrity(store)
+    second = validate_graph_integrity(store)
+    report_json = json.dumps(first, sort_keys=True)
+
+    assert first == second
+    assert "EDGE_TARGET_REF_INVALID" in _codes(first)
+    assert semantic_code not in _codes(first)
+    assert validate_graph_integrity_report(first) is first
+    assert "object at" not in report_json
+    assert "builtins.object" not in report_json
+    if type(target) is object:
+        assert store.edges[-1]["to_node_id"] is target
+        assert len(store.edges) == len(before["edges"])
+    else:
+        assert _snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    ("edge_type", "semantic_code"),
+    [
+        (CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED"),
+        (CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED"),
+    ],
+)
+def test_contribution_analysis_edges_with_non_textual_targets_ignore_edge_order(
+    edge_type: str,
+    semantic_code: str,
+) -> None:
+    first, _, analysis = _analysis_store(evidence_count=2)
+    first.edges.append({"edge_type": edge_type, "from_node_id": analysis["id"], "to_node_id": {}})
+    second = JsonGraphStorage()
+    second.nodes = copy.deepcopy(first.nodes)
+    second.edges = list(reversed(copy.deepcopy(first.edges)))
+    second.audit_records = copy.deepcopy(first.audit_records)
+
+    report = validate_graph_integrity(first)
+
+    assert report == validate_graph_integrity(second)
+    assert "EDGE_TARGET_REF_INVALID" in _codes(report)
+    assert semantic_code not in _codes(report)
+
+
+@pytest.mark.parametrize(
+    ("edge_type", "semantic_code"),
+    [
+        (CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_UNDECLARED"),
+        (CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_UNDECLARED"),
+    ],
+)
+def test_contribution_analysis_edges_with_unsafe_text_target_use_opaque_refs(
+    edge_type: str,
+    semantic_code: str,
+) -> None:
+    store, _, analysis = _analysis_store(evidence_count=2)
+    store.edges.append(
+        {
+            "edge_type": edge_type,
+            "from_node_id": analysis["id"],
+            "to_node_id": "customer:SECRET target",
+        }
+    )
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+
+    assert "EDGE_TARGET_NOT_FOUND" in _codes(report)
+    assert semantic_code in _codes(report)
+    assert "SECRET" not in report_json
+    assert "customer:SECRET target" not in report_json
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_contribution_analysis_no_cascade_for_invalid_or_missing_refs() -> None:
+    missing_store, _, missing = _analysis_store()
+    missing_store.nodes.pop(missing["properties"]["contribution_ref"])
+    missing_codes = _codes(validate_graph_integrity(missing_store))
+    assert "CONTRIBUTION_ANALYSIS_CONTRIBUTION_NOT_FOUND" in missing_codes
+    assert "CONTRIBUTION_ANALYSIS_CONTRIBUTION_EDGE_MISSING" not in missing_codes
+
+    wrong_type_store, _, wrong_type = _analysis_store()
+    wrong_type_store.nodes[wrong_type["properties"]["evidence_refs"][0]]["node_type"] = "Contribution"
+    wrong_type_codes = _codes(validate_graph_integrity(wrong_type_store))
+    assert "CONTRIBUTION_ANALYSIS_EVIDENCE_TYPE_INVALID" in wrong_type_codes
+    assert "CONTRIBUTION_ANALYSIS_EVIDENCE_EDGE_MISSING" not in wrong_type_codes
+
+    invalid_refs_store, _, invalid_refs = _analysis_store()
+    invalid_refs_store.nodes[invalid_refs["id"]]["properties"]["evidence_refs"] = [SensitiveNonJsonValue()]
+    invalid_refs_codes = _codes(validate_graph_integrity(invalid_refs_store))
+    assert invalid_refs_codes.count("CONTRIBUTION_ANALYSIS_EVIDENCE_REFS_INVALID") == 1
+    assert "CONTRIBUTION_ANALYSIS_EVIDENCE_NOT_FOUND" not in invalid_refs_codes
+
+
+def test_contribution_analysis_specific_and_residual_property_failures_are_not_redundant() -> None:
+    isolated, _, isolated_analysis = _analysis_store()
+    isolated.nodes[isolated_analysis["id"]]["properties"]["status"] = "rejected"
+    isolated_codes = _codes(validate_graph_integrity(isolated))
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in isolated_codes
+    assert "CONTRIBUTION_ANALYSIS_PROPERTIES_INVALID" not in isolated_codes
+
+    residual, _, residual_analysis = _analysis_store()
+    residual.nodes[residual_analysis["id"]]["properties"].update({"status": "rejected", "confidence": "certain"})
+    residual_codes = _codes(validate_graph_integrity(residual))
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in residual_codes
+    assert "CONTRIBUTION_ANALYSIS_PROPERTIES_INVALID" in residual_codes
+
+
+def test_contribution_analysis_filters_order_read_only_json_and_privacy() -> None:
+    store, _, analysis = _analysis_store(evidence_count=2)
+    store.nodes[analysis["id"]]["properties"]["status"] = "rejected"
+    store.nodes[analysis["id"]]["properties"]["context_facts"].append({"value": "SECRET customer fact"})
+    before = _snapshot(store)
+
+    contribution_only = validate_graph_integrity(store, node_types=["Contribution"])
+    analysis_only = validate_graph_integrity(store, node_types=["ContributionAnalysis"])
+    warnings_only = validate_graph_integrity(store, severities=["warning"])
+    first = validate_graph_integrity(store)
+
+    reordered = JsonGraphStorage()
+    reordered.nodes = dict(reversed(list(store.nodes.items())))
+    reordered.edges = list(reversed(copy.deepcopy(store.edges)))
+    reordered.audit_records = list(reversed(copy.deepcopy(store.audit_records)))
+
+    assert all(not code.startswith("CONTRIBUTION_ANALYSIS_") for code in _codes(contribution_only))
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in _codes(analysis_only)
+    assert all(issue["severity"] == "warning" for issue in warnings_only["issues"])
+    assert first == validate_graph_integrity(reordered)
+    assert json.loads(json.dumps(first)) == first
+    assert _snapshot(store) == before
+    assert "SECRET customer fact" not in json.dumps(first, sort_keys=True)
+
+
+def test_contribution_and_analysis_valid_coexist_without_semantic_issues() -> None:
+    store, _, _ = _analysis_store(evidence_count=2)
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert [code for code in codes if code.startswith("CONTRIBUTION_")] == []
+    assert [code for code in codes if code.startswith("CONTRIBUTION_ANALYSIS_")] == []
+
+
+def test_invalid_contribution_does_not_skip_valid_analysis_rules() -> None:
+    store, contribution, _ = _analysis_store()
+    contribution["properties"]["status"] = "done"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "CONTRIBUTION_STATUS_INVALID" in codes
+    assert all(not code.startswith("CONTRIBUTION_ANALYSIS_") for code in codes)
+
+
+def test_invalid_analysis_does_not_create_contribution_false_positive() -> None:
+    store, _, analysis = _analysis_store()
+    store.nodes[analysis["id"]]["properties"]["status"] = "rejected"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in codes
+    assert all(not code.startswith("CONTRIBUTION_") or code.startswith("CONTRIBUTION_ANALYSIS_") for code in codes)
+
+
+def test_invalid_contribution_and_analysis_issues_coexist_and_validate() -> None:
+    store, contribution, analysis = _analysis_store()
+    contribution["properties"]["status"] = "done"
+    store.nodes[analysis["id"]]["properties"]["status"] = "rejected"
+
+    report = validate_graph_integrity(store)
+    codes = _codes(report)
+
+    assert "CONTRIBUTION_STATUS_INVALID" in codes
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in codes
+    assert report["issues"] == sorted(
+        report["issues"],
+        key=lambda issue: (
+            issue["severity"],
+            issue["code"],
+            issue["subject_type"],
+            issue["subject_ref"],
+            issue["path"],
+            issue["related_refs"],
+            issue["id"],
+        ),
+    )
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_contribution_and_analysis_semantic_filters_are_cumulative() -> None:
+    store, contribution, analysis = _analysis_store()
+    contribution["properties"]["status"] = "done"
+    store.nodes[analysis["id"]]["properties"]["status"] = "rejected"
+
+    contribution_codes = _codes(validate_graph_integrity(store, node_types=["Contribution"]))
+    analysis_codes = _codes(validate_graph_integrity(store, node_types=["ContributionAnalysis"]))
+    both_codes = _codes(validate_graph_integrity(store, node_types=["Contribution", "ContributionAnalysis"]))
+
+    assert "CONTRIBUTION_STATUS_INVALID" in contribution_codes
+    assert all(not code.startswith("CONTRIBUTION_ANALYSIS_") for code in contribution_codes)
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in analysis_codes
+    assert all(
+        not code.startswith("CONTRIBUTION_") or code.startswith("CONTRIBUTION_ANALYSIS_") for code in analysis_codes
+    )
+    assert "CONTRIBUTION_STATUS_INVALID" in both_codes
+    assert "CONTRIBUTION_ANALYSIS_STATUS_INVALID" in both_codes
 
 
 def test_audit_target_refs_rules_are_conservative() -> None:
@@ -915,6 +1545,86 @@ def test_issue_contract_table_matches_issue_codes() -> None:
 
 def test_all_generated_issue_contracts_are_accepted() -> None:
     store = _store()
+    valid_analysis_store, contribution, accepted = _analysis_store()
+    store.nodes.update(copy.deepcopy(valid_analysis_store.nodes))
+    store.edges.extend(copy.deepcopy(valid_analysis_store.edges))
+    store.audit_records.extend(copy.deepcopy(valid_analysis_store.audit_records))
+
+    safe_evidence = f"evidence:{HASH}"
+    extra_evidence = f"evidence:{OTHER_HASH}"
+    wrong_ref = f"knowledge:{OTHER_HASH}"
+    store.nodes[safe_evidence] = _node(safe_evidence)
+    store.nodes[extra_evidence] = _node(extra_evidence)
+    store.nodes[wrong_ref] = _node(wrong_ref, "KnowledgeNode")
+    store.nodes[f"contribution:{HASH}"] = _node(f"contribution:{HASH}", "Contribution")
+    store.nodes[f"contribution:{HASH}"]["properties"].update(
+        title="",
+        summary="",
+        status="done",
+        privacy_level="public",
+        evidence_refs=[safe_evidence],
+    )
+    store.nodes[f"contribution:{OTHER_HASH}"] = _node(f"contribution:{OTHER_HASH}", "Contribution")
+    store.nodes[f"contribution:{OTHER_HASH}"]["properties"]["evidence_refs"] = [f"evidence:{'c' * 64}"]
+    store.nodes[f"contribution:{'c' * 64}"] = _node(f"contribution:{'c' * 64}", "Contribution")
+    store.nodes[f"contribution:{'c' * 64}"]["properties"]["evidence_refs"] = [wrong_ref]
+    store.nodes[f"contribution:{'d' * 64}"] = _node(f"contribution:{'d' * 64}", "Contribution")
+    store.nodes[f"contribution:{'d' * 64}"]["properties"].update(
+        evidence_refs=[],
+        observation_refs=[],
+        knowledge_refs=[],
+        source_refs=[],
+    )
+    store.nodes[f"contribution:{'e' * 64}"] = _node(f"contribution:{'e' * 64}", "Contribution")
+    store.nodes[f"contribution:{'e' * 64}"]["properties"].update(title="", summary="", evidence_refs=[safe_evidence])
+
+    evidence_ref = accepted["properties"]["evidence_refs"][0]
+    missing_edges = copy.deepcopy(accepted)
+    missing_edges["id"] = "contribution_analysis:" + stable_hash("missing edges")
+    missing_edges["properties"]["id"] = missing_edges["id"]
+    store.nodes[missing_edges["id"]] = missing_edges
+
+    bad_contract = copy.deepcopy(accepted)
+    bad_contract["id"] = f"contribution_analysis:{OTHER_HASH}"
+    bad_contract["properties"].update(
+        {
+            "id": f"contribution_analysis:{OTHER_HASH}",
+            "status": "rejected",
+            "privacy_level": "public",
+            "confidence": "certain",
+        }
+    )
+    store.nodes[bad_contract["id"]] = bad_contract
+
+    missing_refs = copy.deepcopy(accepted)
+    missing_refs["id"] = "contribution_analysis:" + stable_hash("missing refs")
+    missing_refs["properties"].update(
+        {
+            "id": missing_refs["id"],
+            "contribution_ref": f"contribution:{'f' * 64}",
+            "evidence_refs": [f"evidence:{'f' * 64}"],
+        }
+    )
+    store.nodes[missing_refs["id"]] = missing_refs
+
+    type_invalid = copy.deepcopy(accepted)
+    type_invalid["id"] = "contribution_analysis:" + stable_hash("type invalid")
+    type_invalid["properties"].update(
+        {
+            "id": type_invalid["id"],
+            "contribution_ref": evidence_ref,
+            "evidence_refs": [contribution["id"]],
+        }
+    )
+    store.nodes[type_invalid["id"]] = type_invalid
+
+    invalid_refs = copy.deepcopy(accepted)
+    invalid_refs["id"] = "contribution_analysis:" + stable_hash("invalid refs")
+    invalid_refs["properties"].update(
+        {"id": invalid_refs["id"], "contribution_ref": [], "evidence_refs": [SensitiveNonJsonValue()]}
+    )
+    store.nodes[invalid_refs["id"]] = invalid_refs
+
     store.nodes["bad"] = []
     store.nodes[f"knowledge:{HASH}"] = _node(f"observation:{HASH}")
     store.nodes["evidence:a"]["id"] = ""
@@ -924,13 +1634,20 @@ def test_all_generated_issue_contracts_are_accepted() -> None:
     store.edges = [
         [],
         {"edge_type": "", "from_node_id": "", "to_node_id": ""},
+        _edge(CONTRIBUTION_SUPPORTED_BY_EVIDENCE, f"contribution:{'c' * 64}", wrong_ref),
+        _edge(CONTRIBUTION_SUPPORTED_BY_EVIDENCE, f"contribution:{'d' * 64}", extra_evidence),
+        _edge(CONTRIBUTION_SUPPORTED_BY_EVIDENCE, f"contribution:{'e' * 64}", safe_evidence),
+        _edge("MISSING", f"evidence:{'e' * 64}", f"contribution:{'f' * 64}"),
         _edge("DUP", f"evidence:{HASH}", f"contribution:{HASH}"),
         _edge("DUP", f"evidence:{HASH}", f"contribution:{HASH}"),
     ]
+    store.edges.append(_edge(CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION, accepted["id"], f"contribution:{OTHER_HASH}"))
+    store.edges.append(_edge(CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE, accepted["id"], f"evidence:{OTHER_HASH}"))
     store.audit_records = [
         [],
         {"audit_type": "", "created_at": "bad", "target_refs": [None], "result": "", "metadata": []},
         _audit(f"evidence:{HASH}", f"evidence:{HASH}"),
+        _audit(f"evidence:{'e' * 64}"),
     ]
 
     report = validate_graph_integrity(store)
@@ -1179,23 +1896,20 @@ def test_report_does_not_copy_secret_from_key_node_id_edge_endpoint_or_audit_tar
 
 
 def test_complete_claim_export_flow_shape_has_no_structural_false_positives() -> None:
-    store = JsonGraphStorage()
+    store, _, analysis = _analysis_store()
     ids = [
-        ("evidence:a", "EvidenceNode"),
-        ("contribution:a", "Contribution"),
-        ("contribution_analysis:a", "ContributionAnalysis"),
         ("career_claim:a", "CareerClaim"),
         ("artifact:a", "ProfessionalArtifact"),
         ("artifact_export_receipt:a", "ArtifactExportReceipt"),
     ]
-    store.nodes = {node_id: _node(node_id, node_type) for node_id, node_type in ids}
-    store.edges = [
-        _edge("CONTRIBUTION_SUPPORTED_BY_EVIDENCE", "contribution:a", "evidence:a"),
-        _edge("CONTRIBUTION_ANALYSIS_FOR_CONTRIBUTION", "contribution_analysis:a", "contribution:a"),
-        _edge("CAREER_CLAIM_FROM_ANALYSIS", "career_claim:a", "contribution_analysis:a"),
-        _edge("PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM", "artifact:a", "career_claim:a"),
-        _edge("ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT", "artifact_export_receipt:a", "artifact:a"),
-    ]
+    store.nodes.update({node_id: _node(node_id, node_type) for node_id, node_type in ids})
+    store.edges.extend(
+        [
+            _edge("CAREER_CLAIM_FROM_ANALYSIS", "career_claim:a", analysis["id"]),
+            _edge("PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM", "artifact:a", "career_claim:a"),
+            _edge("ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT", "artifact_export_receipt:a", "artifact:a"),
+        ]
+    )
     store.audit_records = [
         _audit("artifact_export_receipt:a", "claim_based_artifact_export_candidate:in-memory"),
     ]
