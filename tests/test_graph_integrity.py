@@ -14,10 +14,14 @@ from carrer.artifacts import (
     ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
     PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
     PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+    accept_artifact_export_repair,
     accept_claim_based_artifact,
     accept_claim_based_artifact_export,
+    artifact_export_repair_receipt_id,
+    build_artifact_export_repair_candidate,
     build_artifact_from_career_claims,
     build_claim_based_artifact_export_candidate,
+    check_artifact_export_integrity,
     generate_resume_draft,
 )
 from carrer.claims import (
@@ -171,7 +175,7 @@ def _claim_artifact_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, di
 
 
 def _export_receipt_store(
-    output_name: str = "default", evidence_count: int = 1
+    output_name: str = "default", evidence_count: int = 1, *, canonicalize_audits: bool = True
 ) -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any], dict[str, Any]]:
     store, claim, artifact = _claim_artifact_store(evidence_count)
     output_directory = _export_output_directory(output_name)
@@ -191,8 +195,28 @@ def _export_receipt_store(
         decision_actor="human",
         decided_at=NOW,
     )["receipt"]
-    _canonicalize_audit_target_refs(store)
+    if canonicalize_audits:
+        _canonicalize_audit_target_refs(store)
     return store, claim, artifact, receipt
+
+
+def _repair_receipt_store(
+    output_name: str = "repair-default",
+) -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    store, _, _, receipt = _export_receipt_store(output_name, evidence_count=2, canonicalize_audits=False)
+    output_directory = _export_output_directory(output_name)
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM]
+    report = check_artifact_export_integrity(store, receipt["id"], output_directory=output_directory, checked_at=NOW)
+    candidate = build_artifact_export_repair_candidate(store, report, created_at=NOW)
+    accept_artifact_export_repair(
+        store,
+        candidate,
+        decision_actor="human",
+        decided_at=NOW,
+        verified_at=NOW,
+    )
+    repair_receipt = store.nodes[artifact_export_repair_receipt_id(candidate["id"])]
+    return store, receipt, candidate, repair_receipt
 
 
 def _export_output_directory(output_name: str) -> Path:
@@ -1821,14 +1845,239 @@ def test_professional_artifact_invalid_does_not_create_false_positive_in_claim()
     assert [code for code in _codes(validate_graph_integrity(store)) if code.startswith("CAREER_CLAIM_")] == []
 
 
-def test_export_repair_receipts_remain_outside_professional_artifact_semantics() -> None:
-    store, _, _ = _claim_artifact_store()
-    store.nodes["artifact_export_repair_receipt:" + "c" * 64] = _node(
-        "artifact_export_repair_receipt:" + "c" * 64,
-        "ArtifactExportRepairReceipt",
-    )
+def test_artifact_export_repair_receipt_api_happy_path_has_no_issues() -> None:
+    store, _, _, _ = _repair_receipt_store("repair-api-happy")
 
     assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_artifact_export_repair_receipt_full_flow_has_no_issues() -> None:
+    store, receipt, candidate, repair_receipt = _repair_receipt_store("repair-full-flow")
+
+    assert repair_receipt["properties"]["receipt_id"] == receipt["id"]
+    assert repair_receipt["properties"]["repair_candidate_id"] == candidate["id"]
+    assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_artifact_export_repair_receipt_filter_is_independent_from_export_receipt() -> None:
+    store, receipt, _, repair_receipt = _repair_receipt_store("repair-filter")
+    receipt["properties"]["status"] = "draft"
+    repair_receipt["properties"]["repair_actions"] = ["bad"]
+
+    repair_only = validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"])
+    receipt_only = validate_graph_integrity(store, node_types=["ArtifactExportReceipt"])
+    combined = validate_graph_integrity(store, node_types=["ArtifactExportReceipt", "ArtifactExportRepairReceipt"])
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID" in _codes(repair_only)
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" not in _codes(repair_only)
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID" not in _codes(receipt_only)
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in _codes(receipt_only)
+    assert {"ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID", "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID"} <= set(
+        _codes(combined)
+    )
+
+
+def test_artifact_export_repair_receipt_properties_not_dict_is_structural_only() -> None:
+    store, _, _, repair_receipt = _repair_receipt_store("repair-properties")
+    repair_receipt["properties"] = []
+
+    codes = _codes(validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"]))
+
+    assert codes == ["NODE_PROPERTIES_INVALID"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("repair_candidate_id", None, "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_CANDIDATE_REF_INVALID"),
+        ("report_id", "bad", "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPORT_REF_INVALID"),
+        (
+            "issue_codes",
+            ["claim_edge_missing", "claim_edge_missing"],
+            "ARTIFACT_EXPORT_REPAIR_RECEIPT_ISSUE_CODES_INVALID",
+        ),
+        ("repair_actions", ["bad"], "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID"),
+        ("repaired_edge_count", True, "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIRED_EDGE_COUNT_INVALID"),
+        ("temporary_file_removed", "yes", "ARTIFACT_EXPORT_REPAIR_RECEIPT_TEMPORARY_FILE_REMOVED_INVALID"),
+        ("actor", SensitiveNonJsonValue(), "ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID"),
+        ("decided_at", "bad", "ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID"),
+        ("audit_id", "bad", "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_REF_INVALID"),
+    ],
+)
+def test_artifact_export_repair_receipt_contract_fields(field: str, value: object, code: str) -> None:
+    store, _, _, repair_receipt = _repair_receipt_store(f"repair-contract-{field}")
+    repair_receipt["properties"][field] = value
+    report = validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"])
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert code in codes
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID" not in codes
+    assert "SECRET" not in report_json
+    assert "object at" not in report_json
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_artifact_export_repair_receipt_identity_mismatch_and_invalid_input_no_cascade() -> None:
+    mismatch, _, _, mismatch_receipt = _repair_receipt_store("repair-id-mismatch")
+    mismatch_receipt["id"] = "artifact_export_repair_receipt:" + "c" * 64
+
+    invalid_input, _, _, invalid_receipt = _repair_receipt_store("repair-id-invalid-input")
+    invalid_receipt["properties"]["repair_candidate_id"] = "bad"
+    invalid_codes = _codes(validate_graph_integrity(invalid_input, node_types=["ArtifactExportRepairReceipt"]))
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_ID_INVALID" in _codes(
+        validate_graph_integrity(mismatch, node_types=["ArtifactExportRepairReceipt"])
+    )
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_CANDIDATE_REF_INVALID" in invalid_codes
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_ID_INVALID" not in invalid_codes
+
+
+@pytest.mark.parametrize("receipt_ref", [None, [], "", "   ", "customer:SECRET"])
+def test_artifact_export_repair_receipt_receipt_ref_invalid_no_lookup(receipt_ref: object) -> None:
+    store, _, _, repair_receipt = _repair_receipt_store("repair-receipt-ref-invalid")
+    repair_receipt["properties"]["receipt_id"] = receipt_ref
+    report = validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"])
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_REF_INVALID" in codes
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_NOT_FOUND" not in codes
+    assert "SECRET" not in report_json
+
+
+def test_artifact_export_repair_receipt_receipt_target_issues() -> None:
+    missing, _, _, missing_repair = _repair_receipt_store("repair-receipt-missing")
+    missing_repair["properties"]["receipt_id"] = "artifact_export_receipt:" + "c" * 64
+
+    wrong, _, _, wrong_repair = _repair_receipt_store("repair-receipt-wrong")
+    wrong_ref = "artifact_export_receipt:" + "d" * 64
+    wrong.nodes[wrong_ref] = _node(wrong_ref, "CareerClaim")
+    wrong_repair["properties"]["receipt_id"] = wrong_ref
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_NOT_FOUND" in _codes(
+        validate_graph_integrity(missing, node_types=["ArtifactExportRepairReceipt"])
+    )
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_TYPE_INVALID" in _codes(
+        validate_graph_integrity(wrong, node_types=["ArtifactExportRepairReceipt"])
+    )
+
+
+def test_artifact_export_repair_receipt_candidate_ref_is_in_memory_only() -> None:
+    store, _, _, repair_receipt = _repair_receipt_store("repair-candidate-in-memory")
+    repair_receipt["properties"]["repair_candidate_id"] = "artifact_export_repair_candidate:" + "c" * 64
+
+    codes = _codes(validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"]))
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_CANDIDATE_REF_INVALID" not in codes
+    assert all("CANDIDATE_NOT_FOUND" not in code for code in codes)
+
+
+def test_artifact_export_repair_receipt_audit_issues() -> None:
+    missing, _, _, missing_repair = _repair_receipt_store("repair-audit-missing")
+    missing_repair["properties"]["audit_id"] = "audit:" + "c" * 64
+
+    invalid, _, _, invalid_repair = _repair_receipt_store("repair-audit-invalid")
+    audit = next(
+        record for record in invalid.audit_records if record.get("id") == invalid_repair["properties"]["audit_id"]
+    )
+    audit["metadata"]["repair_actions"] = ["remove_stale_temp_file"]
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_NOT_FOUND" in _codes(
+        validate_graph_integrity(missing, node_types=["ArtifactExportRepairReceipt"])
+    )
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_INVALID" in _codes(
+        validate_graph_integrity(invalid, node_types=["ArtifactExportRepairReceipt"])
+    )
+
+
+def test_artifact_export_repair_receipt_duplicate_audit_id_is_not_valid() -> None:
+    store, _, _, repair_receipt = _repair_receipt_store("repair-audit-duplicate")
+    audit = next(
+        record for record in store.audit_records if record.get("id") == repair_receipt["properties"]["audit_id"]
+    )
+    store.audit_records.append(copy.deepcopy(audit))
+
+    codes = _codes(validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"]))
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_NOT_FOUND" in codes
+
+
+def test_artifact_export_repair_receipt_specific_and_residual_behavior() -> None:
+    isolated, _, _, isolated_repair = _repair_receipt_store("repair-specific")
+    isolated_repair["properties"]["repair_actions"] = ["bad"]
+
+    residual, _, _, residual_repair = _repair_receipt_store("repair-specific-residual")
+    residual_repair["properties"]["repair_actions"] = ["bad"]
+    residual_repair["properties"]["unexpected"] = SensitiveNonJsonValue()
+
+    residual_only, _, _, residual_only_repair = _repair_receipt_store("repair-residual")
+    residual_only_repair["properties"]["unexpected"] = SensitiveNonJsonValue()
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID" not in _codes(
+        validate_graph_integrity(isolated, node_types=["ArtifactExportRepairReceipt"])
+    )
+    assert {
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID",
+    } <= set(_codes(validate_graph_integrity(residual, node_types=["ArtifactExportRepairReceipt"])))
+    assert _codes(validate_graph_integrity(residual_only, node_types=["ArtifactExportRepairReceipt"])) == [
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID"
+    ]
+
+
+def test_artifact_export_repair_receipt_read_only_deterministic_json_and_filesystem_independent() -> None:
+    store, _, _, repair_receipt = _repair_receipt_store("repair-determinism")
+    output_directory = _export_output_directory("repair-determinism")
+    baseline = validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"])
+    before = _snapshot(store)
+    reordered = copy.deepcopy(store)
+    reordered.nodes = dict(reversed(list(reordered.nodes.items())))
+    reordered.edges = list(reversed(reordered.edges))
+    reordered.audit_records = list(reversed(reordered.audit_records))
+
+    audit_reordered = copy.deepcopy(store)
+    audit_reordered.audit_records = list(reversed(audit_reordered.audit_records))
+
+    shutil.rmtree(output_directory)
+    output_directory.mkdir(parents=True)
+    (output_directory / "changed.md").write_text("changed", encoding="utf-8")
+    (output_directory / ".residual.tmp").write_text("tmp", encoding="utf-8")
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_INVALID" not in _codes(baseline)
+    assert len(store.audit_records) > 1
+    assert validate_graph_integrity(audit_reordered, node_types=["ArtifactExportRepairReceipt"]) == baseline
+    assert validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"]) == baseline
+    assert validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"]) == validate_graph_integrity(
+        reordered, node_types=["ArtifactExportRepairReceipt"]
+    )
+    assert json.loads(json.dumps(baseline)) == baseline
+    assert _snapshot(store) == before
+    assert repair_receipt["properties"]["actor"] == "human"
+
+
+def test_artifact_export_repair_receipt_cumulative_determinism_with_reordered_audits() -> None:
+    store, _, _, _ = _repair_receipt_store("repair-cumulative-order")
+    first = validate_graph_integrity(store)
+    reordered = copy.deepcopy(store)
+    reordered.nodes = dict(reversed(list(reordered.nodes.items())))
+    reordered.edges = list(reversed(reordered.edges))
+    reordered.audit_records = list(reversed(reordered.audit_records))
+
+    assert validate_graph_integrity(reordered) == first
+
+
+def test_artifact_export_repair_receipt_duplicate_and_issue_contracts_are_valid() -> None:
+    store, _, _, repair_receipt = _repair_receipt_store("repair-duplicate")
+    duplicate = copy.deepcopy(repair_receipt)
+    duplicate["id"] = "artifact_export_repair_receipt:" + "c" * 64
+    store.nodes[duplicate["id"]] = duplicate
+
+    report = validate_graph_integrity(store, node_types=["ArtifactExportRepairReceipt"])
+
+    assert "ARTIFACT_EXPORT_REPAIR_RECEIPT_DUPLICATED" in _codes(report)
+    assert set(ISSUE_CONTRACTS) == ISSUE_CODES
+    assert validate_graph_integrity_report(report) is report
 
 
 def test_export_receipt_filter_is_independent_from_professional_artifact() -> None:
@@ -3119,6 +3368,43 @@ def test_all_generated_issue_contracts_are_accepted() -> None:
         receipt_report = validate_graph_integrity(receipt_store)
         generated_codes.update(_codes(receipt_report))
         assert validate_graph_integrity_report(receipt_report) is receipt_report
+    repair_mutations = [
+        lambda _store, repair: repair["properties"].__setitem__("unexpected", SensitiveNonJsonValue()),
+        lambda _store, repair: repair.__setitem__("id", "artifact_export_repair_receipt:" + "c" * 64),
+        lambda _store, repair: repair["properties"].__setitem__("repair_candidate_id", []),
+        lambda _store, repair: repair["properties"].__setitem__("report_id", "bad"),
+        lambda _store, repair: repair["properties"].__setitem__("receipt_id", []),
+        lambda _store, repair: repair["properties"].__setitem__("receipt_id", "artifact_export_receipt:" + "c" * 64),
+        lambda store, repair: (
+            store.nodes.__setitem__(
+                "artifact_export_receipt:" + "c" * 64,
+                _node("artifact_export_receipt:" + "c" * 64, "CareerClaim"),
+            ),
+            repair["properties"].__setitem__("receipt_id", "artifact_export_receipt:" + "c" * 64),
+        ),
+        lambda _store, repair: repair["properties"].__setitem__(
+            "issue_codes", ["claim_edge_missing", "claim_edge_missing"]
+        ),
+        lambda _store, repair: repair["properties"].__setitem__("repair_actions", ["bad"]),
+        lambda _store, repair: repair["properties"].__setitem__("repaired_edge_count", True),
+        lambda _store, repair: repair["properties"].__setitem__("temporary_file_removed", "yes"),
+        lambda _store, repair: repair["properties"].__setitem__("actor", SensitiveNonJsonValue()),
+        lambda _store, repair: repair["properties"].__setitem__("audit_id", "bad"),
+        lambda _store, repair: repair["properties"].__setitem__("audit_id", "audit:" + "c" * 64),
+        lambda store, repair: next(
+            record for record in store.audit_records if record.get("id") == repair["properties"]["audit_id"]
+        )["metadata"].__setitem__("repair_actions", ["remove_stale_temp_file"]),
+        lambda store, repair: store.nodes.__setitem__(
+            "artifact_export_repair_receipt:" + "c" * 64,
+            dict(copy.deepcopy(repair), id="artifact_export_repair_receipt:" + "c" * 64),
+        ),
+    ]
+    for index, mutate in enumerate(repair_mutations):
+        repair_store, _, _, repair_receipt = _repair_receipt_store(f"repair-contracts-{index}")
+        mutate(repair_store, repair_receipt)
+        repair_report = validate_graph_integrity(repair_store)
+        generated_codes.update(_codes(repair_report))
+        assert validate_graph_integrity_report(repair_report) is repair_report
 
     assert generated_codes == ISSUE_CODES
     assert validate_graph_integrity_report(report) is report
