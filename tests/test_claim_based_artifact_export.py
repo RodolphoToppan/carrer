@@ -1671,6 +1671,18 @@ def test_repair_acceptance_audit_requires_original_applied_success(output_dir: P
         validate_artifact_export_repair_acceptance_audit(store, candidate)
 
 
+def test_repair_acceptance_audit_validation_is_independent_from_audit_order(output_dir: Path) -> None:
+    store, _, candidate = _accepted_repair(output_dir)
+    receipt = store.nodes[artifact_export_repair_receipt_id(candidate["id"])]
+    reordered = copy.deepcopy(store)
+    reordered.audit_records = list(reversed(reordered.audit_records))
+
+    audit = validate_artifact_export_repair_acceptance_audit(reordered, candidate)
+
+    assert len(store.audit_records) > 1
+    assert audit["id"] == receipt["properties"]["audit_id"]
+
+
 def test_repair_acceptance_audit_ignores_later_idempotent_audits(output_dir: Path) -> None:
     store, _, candidate = _accepted_repair(output_dir)
     accept_artifact_export_repair(
