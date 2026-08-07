@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from carrer.artifacts import (
+    ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT,
+    ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
+    ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
     PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
     PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
     accept_claim_based_artifact,
+    accept_claim_based_artifact_export,
     build_artifact_from_career_claims,
+    build_claim_based_artifact_export_candidate,
     generate_resume_draft,
 )
 from carrer.claims import (
@@ -163,6 +170,35 @@ def _claim_artifact_store(evidence_count: int = 1) -> tuple[JsonGraphStorage, di
     return store, claim, artifact
 
 
+def _export_receipt_store(
+    output_name: str = "default", evidence_count: int = 1
+) -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    store, claim, artifact = _claim_artifact_store(evidence_count)
+    output_directory = _export_output_directory(output_name)
+    if output_directory.exists():
+        shutil.rmtree(output_directory)
+    candidate = build_claim_based_artifact_export_candidate(
+        store,
+        artifact["id"],
+        export_scope="external",
+        export_format="markdown",
+        created_at=NOW,
+    )
+    receipt = accept_claim_based_artifact_export(
+        store,
+        candidate,
+        output_directory=output_directory,
+        decision_actor="human",
+        decided_at=NOW,
+    )["receipt"]
+    _canonicalize_audit_target_refs(store)
+    return store, claim, artifact, receipt
+
+
+def _export_output_directory(output_name: str) -> Path:
+    return Path(".temp") / "graph-integrity-export" / output_name
+
+
 def _legacy_artifact_store() -> tuple[JsonGraphStorage, dict[str, Any], dict[str, Any]]:
     store = JsonGraphStorage()
     evidence = _real_evidence()
@@ -281,6 +317,14 @@ def _codes(report: dict[str, Any]) -> list[str]:
 
 def _snapshot(store: JsonGraphStorage) -> dict[str, Any]:
     return copy.deepcopy({"nodes": store.nodes, "edges": store.edges, "audit_records": store.audit_records})
+
+
+def _json_snapshot(store: JsonGraphStorage) -> str:
+    return json.dumps(
+        {"nodes": store.nodes, "edges": store.edges, "audit_records": store.audit_records},
+        sort_keys=True,
+        default=lambda _: "<non-json>",
+    )
 
 
 def _report_ids(store: JsonGraphStorage) -> tuple[str, str]:
@@ -1777,18 +1821,418 @@ def test_professional_artifact_invalid_does_not_create_false_positive_in_claim()
     assert [code for code in _codes(validate_graph_integrity(store)) if code.startswith("CAREER_CLAIM_")] == []
 
 
-def test_export_receipts_remain_outside_professional_artifact_semantics() -> None:
+def test_export_repair_receipts_remain_outside_professional_artifact_semantics() -> None:
     store, _, _ = _claim_artifact_store()
-    store.nodes["artifact_export_receipt:" + "c" * 64] = _node(
-        "artifact_export_receipt:" + "c" * 64,
-        "ArtifactExportReceipt",
-    )
     store.nodes["artifact_export_repair_receipt:" + "c" * 64] = _node(
         "artifact_export_repair_receipt:" + "c" * 64,
         "ArtifactExportRepairReceipt",
     )
 
     assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_export_receipt_filter_is_independent_from_professional_artifact() -> None:
+    store, _, _, receipt = _export_receipt_store("filter")
+    receipt["properties"]["status"] = "draft"
+
+    artifact_only = validate_graph_integrity(store, node_types=["ProfessionalArtifact"])
+    receipt_only = validate_graph_integrity(store, node_types=["ArtifactExportReceipt"])
+    combined = validate_graph_integrity(store, node_types=["ProfessionalArtifact", "ArtifactExportReceipt"])
+
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" not in _codes(artifact_only)
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in _codes(receipt_only)
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in _codes(combined)
+
+
+def test_artifact_export_receipt_api_happy_path_has_no_issues() -> None:
+    store, _, _, _ = _export_receipt_store("api-happy-path")
+
+    assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_full_flow_with_artifact_export_receipt_has_no_issues() -> None:
+    store, _, _, receipt = _export_receipt_store("full-flow", evidence_count=2)
+
+    assert _codes(validate_graph_integrity(store)) == []
+
+
+def test_artifact_export_receipt_integrity_is_independent_from_filesystem_state() -> None:
+    store, _, _, receipt = _export_receipt_store("filesystem-independent")
+    output_directory = _export_output_directory("filesystem-independent")
+    output_file = output_directory / receipt["properties"]["file_name"]
+    baseline = validate_graph_integrity(store)
+
+    output_file.unlink()
+    assert validate_graph_integrity(store) == baseline
+
+    output_file.write_text("changed", encoding="utf-8")
+    assert validate_graph_integrity(store) == baseline
+
+    shutil.rmtree(output_directory)
+    assert validate_graph_integrity(store) == baseline
+
+    output_directory.mkdir(parents=True)
+    output_file.with_name("." + output_file.name + ".tmp").write_text("tmp", encoding="utf-8")
+    assert validate_graph_integrity(store) == baseline
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("source_type", "legacy", "ARTIFACT_EXPORT_RECEIPT_SOURCE_TYPE_INVALID"),
+        ("status", "draft", "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID"),
+        ("export_scope", "public", "ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID"),
+        ("export_format", "pdf", "ARTIFACT_EXPORT_RECEIPT_FORMAT_INVALID"),
+        ("privacy_level", "private", "ARTIFACT_EXPORT_RECEIPT_PRIVACY_INVALID"),
+        ("content_hash", "A" * 64, "ARTIFACT_EXPORT_RECEIPT_CONTENT_HASH_INVALID"),
+        ("file_name", "../secret.md", "ARTIFACT_EXPORT_RECEIPT_FILE_NAME_INVALID"),
+        ("output_path", "C:/secret.md", "ARTIFACT_EXPORT_RECEIPT_OUTPUT_PATH_INVALID"),
+        ("review_actor", SensitiveNonJsonValue(), "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID"),
+        ("reviewed_at", "bad", "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID"),
+    ],
+)
+def test_artifact_export_receipt_contract_fields(field: str, value: object, code: str) -> None:
+    store, _, _, receipt = _export_receipt_store(f"contract-{field}")
+    receipt["properties"][field] = value
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert code in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+    assert "SECRET" not in report_json
+    assert "object at" not in report_json
+    assert validate_graph_integrity_report(report) is report
+
+
+def test_artifact_export_receipt_specific_issue_does_not_emit_residual() -> None:
+    store, _, _, receipt = _export_receipt_store("specific-only")
+    receipt["properties"]["status"] = "draft"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+
+
+def test_artifact_export_receipt_specific_and_warning_count_issue() -> None:
+    store, _, _, receipt = _export_receipt_store("specific-warning")
+    receipt["properties"]["status"] = "draft"
+    receipt["properties"]["metadata"]["warning_count"] = True
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("source_type", "legacy", "ARTIFACT_EXPORT_RECEIPT_SOURCE_TYPE_INVALID"),
+        ("status", "draft", "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID"),
+        ("export_scope", "public", "ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID"),
+        ("export_format", "pdf", "ARTIFACT_EXPORT_RECEIPT_FORMAT_INVALID"),
+        ("privacy_level", "private", "ARTIFACT_EXPORT_RECEIPT_PRIVACY_INVALID"),
+        ("content_hash", "A" * 64, "ARTIFACT_EXPORT_RECEIPT_CONTENT_HASH_INVALID"),
+        ("file_name", "../secret.md", "ARTIFACT_EXPORT_RECEIPT_FILE_NAME_INVALID"),
+        ("output_path", "C:/secret.md", "ARTIFACT_EXPORT_RECEIPT_OUTPUT_PATH_INVALID"),
+        ("review_actor", SensitiveNonJsonValue(), "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID"),
+        ("reviewed_at", "bad", "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID"),
+    ],
+)
+def test_artifact_export_receipt_isolated_specific_failures_have_no_residual(
+    field: str, value: object, code: str
+) -> None:
+    store, _, _, receipt = _export_receipt_store(f"isolated-{field}")
+    receipt["properties"][field] = value
+    before = _json_snapshot(store)
+
+    first = validate_graph_integrity(store)
+    second = validate_graph_integrity(store)
+    report_json = json.dumps(first, sort_keys=True)
+    codes = _codes(first)
+
+    assert first == second
+    assert code in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+    assert "SECRET" not in report_json
+    assert "object at" not in report_json
+    assert _json_snapshot(store) == before
+    assert validate_graph_integrity_report(first) is first
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("source_type", "legacy", "ARTIFACT_EXPORT_RECEIPT_SOURCE_TYPE_INVALID"),
+        ("status", "draft", "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID"),
+        ("export_scope", "public", "ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID"),
+        ("export_format", "pdf", "ARTIFACT_EXPORT_RECEIPT_FORMAT_INVALID"),
+        ("privacy_level", "private", "ARTIFACT_EXPORT_RECEIPT_PRIVACY_INVALID"),
+        ("content_hash", "A" * 64, "ARTIFACT_EXPORT_RECEIPT_CONTENT_HASH_INVALID"),
+        ("file_name", "../secret.md", "ARTIFACT_EXPORT_RECEIPT_FILE_NAME_INVALID"),
+        ("output_path", "C:/secret.md", "ARTIFACT_EXPORT_RECEIPT_OUTPUT_PATH_INVALID"),
+        ("review_actor", SensitiveNonJsonValue(), "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID"),
+        ("reviewed_at", "bad", "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID"),
+    ],
+)
+def test_artifact_export_receipt_specific_plus_residual_reports_both(field: str, value: object, code: str) -> None:
+    store, _, _, receipt = _export_receipt_store(f"specific-residual-{field}")
+    receipt["properties"][field] = value
+    receipt["properties"]["metadata"]["artifact_type"] = ""
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert code in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" in codes
+
+
+def test_artifact_export_receipt_residual_contract_issue_only() -> None:
+    store, _, _, receipt = _export_receipt_store("residual-only")
+    receipt["properties"]["metadata"]["artifact_type"] = ""
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" not in codes
+
+
+def test_artifact_export_receipt_non_json_residual_is_sanitized() -> None:
+    store, _, _, receipt = _export_receipt_store("residual-non-json")
+    receipt["properties"]["metadata"]["unexpected"] = SensitiveNonJsonValue()
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" in _codes(report)
+    assert "SECRET" not in report_json
+    assert "object at" not in report_json
+    assert "SensitiveNonJsonValue" not in report_json
+
+
+def test_artifact_export_receipt_identity_mismatch_and_invalid_input_no_cascade() -> None:
+    mismatch, _, _, mismatch_receipt = _export_receipt_store("mismatch")
+    mismatch_receipt["id"] = "artifact_export_receipt:" + "c" * 64
+
+    invalid_input, _, _, invalid_receipt = _export_receipt_store("invalid")
+    invalid_receipt["properties"]["export_scope"] = "public"
+    invalid_input_codes = _codes(validate_graph_integrity(invalid_input))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_ID_INVALID" in _codes(validate_graph_integrity(mismatch))
+    assert "ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID" in invalid_input_codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ID_INVALID" not in invalid_input_codes
+
+
+@pytest.mark.parametrize(
+    "candidate_id",
+    [None, [], {}, object(), "", "   ", "customer:SECRET candidate", "claim_based_artifact_export_candidate:bad"],
+)
+def test_artifact_export_receipt_export_candidate_ref_invalid_no_identity_cascade(candidate_id: object) -> None:
+    store, _, _, receipt = _export_receipt_store("candidate-ref-invalid")
+    receipt["properties"]["export_candidate_id"] = candidate_id
+    before = _json_snapshot(store)
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert "ARTIFACT_EXPORT_RECEIPT_EXPORT_CANDIDATE_REF_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ID_INVALID" not in codes
+    assert "SECRET" not in report_json
+    assert "object at" not in report_json
+    assert _json_snapshot(store) == before
+
+
+def test_artifact_export_receipt_canonical_candidate_ref_mismatch_is_identity_issue() -> None:
+    store, _, _, receipt = _export_receipt_store("candidate-ref-mismatch")
+    receipt["properties"]["export_candidate_id"] = "claim_based_artifact_export_candidate:" + "c" * 64
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_EXPORT_CANDIDATE_REF_INVALID" not in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ID_INVALID" in codes
+
+
+@pytest.mark.parametrize("artifact_ref", [[], "", "   "])
+def test_artifact_export_receipt_artifact_ref_invalid_values(artifact_ref: object) -> None:
+    store, _, _, receipt = _export_receipt_store("artifact-ref-invalid")
+    receipt["properties"]["source_artifact_id"] = artifact_ref
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_REF_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_NOT_FOUND" not in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_MISSING" not in codes
+
+
+def test_artifact_export_receipt_artifact_target_and_edge_issues() -> None:
+    missing, _, artifact, missing_receipt = _export_receipt_store("missing")
+    missing_receipt["properties"]["source_artifact_id"] = "artifact:" + "c" * 64
+    missing.create_edge(ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT, missing_receipt["id"], artifact["id"])
+
+    wrong_type, _, _, wrong_receipt = _export_receipt_store("wrong")
+    wrong_ref = "artifact:" + "d" * 64
+    wrong_type.nodes[wrong_ref] = _node(wrong_ref, "CareerClaim")
+    wrong_receipt["properties"]["source_artifact_id"] = wrong_ref
+
+    no_edge, _, _, _ = _export_receipt_store("no-edge")
+    no_edge.edges = [edge for edge in no_edge.edges if edge.get("edge_type") != ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT]
+
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_NOT_FOUND" in _codes(validate_graph_integrity(missing))
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_UNDECLARED" in _codes(validate_graph_integrity(missing))
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_TYPE_INVALID" in _codes(validate_graph_integrity(wrong_type))
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_MISSING" in _codes(validate_graph_integrity(no_edge))
+
+
+def test_artifact_export_receipt_artifact_status_privacy_and_edge_are_independent() -> None:
+    store, _, artifact, _ = _export_receipt_store("artifact-status-privacy")
+    artifact["properties"]["status"] = "draft"
+    artifact["properties"]["privacy_level"] = "internal"
+    store.edges = [edge for edge in store.edges if edge.get("edge_type") != ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT]
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_STATUS_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_PRIVACY_INCOMPATIBLE" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_MISSING" in codes
+
+
+@pytest.mark.parametrize("refs", [{}, [], [object()], None, [" "], ["career_claim:" + "c" * 64, []]])
+def test_artifact_export_receipt_claim_refs_invalid_values(refs: object) -> None:
+    store, _, _, receipt = _export_receipt_store("claim-refs-invalid")
+    receipt["properties"]["metadata"]["claim_count"] = 2
+    receipt["properties"]["claim_refs"] = refs
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_REFS_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID" not in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_MISSING" not in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+
+
+@pytest.mark.parametrize("refs", [{}, [], [object()], None, [" "], ["evidence:" + "c" * 64, []]])
+def test_artifact_export_receipt_evidence_refs_invalid_values(refs: object) -> None:
+    store, _, _, receipt = _export_receipt_store("evidence-refs-invalid")
+    receipt["properties"]["metadata"]["evidence_count"] = 2
+    receipt["properties"]["evidence_refs"] = refs
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_REFS_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID" not in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_MISSING" not in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+
+
+def test_artifact_export_receipt_claim_and_evidence_target_edge_issues() -> None:
+    missing_claim, _, _, missing_claim_receipt = _export_receipt_store("missing-claim")
+    missing_claim_receipt["properties"]["claim_refs"] = ["career_claim:" + "c" * 64]
+
+    wrong_claim, _, _, wrong_claim_receipt = _export_receipt_store("wrong-claim")
+    wrong_claim.nodes["career_claim:" + "c" * 64] = _node("career_claim:" + "c" * 64, "EvidenceNode")
+    wrong_claim_receipt["properties"]["claim_refs"] = ["career_claim:" + "c" * 64]
+
+    missing_evidence, _, _, missing_evidence_receipt = _export_receipt_store("missing-evidence")
+    missing_evidence_receipt["properties"]["evidence_refs"] = ["evidence:" + "c" * 64]
+
+    wrong_evidence, _, _, wrong_evidence_receipt = _export_receipt_store("wrong-evidence")
+    wrong_evidence.nodes["evidence:" + "c" * 64] = _node("evidence:" + "c" * 64, "CareerClaim")
+    wrong_evidence_receipt["properties"]["evidence_refs"] = ["evidence:" + "c" * 64]
+
+    no_edges, _, _, _ = _export_receipt_store("no-edges")
+    no_edges.edges = [
+        edge
+        for edge in no_edges.edges
+        if edge.get("edge_type")
+        not in {ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM, ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE}
+    ]
+
+    codes = set(_codes(validate_graph_integrity(no_edges)))
+
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_NOT_FOUND" in _codes(validate_graph_integrity(missing_claim))
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_TYPE_INVALID" in _codes(validate_graph_integrity(wrong_claim))
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_NOT_FOUND" in _codes(validate_graph_integrity(missing_evidence))
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_TYPE_INVALID" in _codes(validate_graph_integrity(wrong_evidence))
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_MISSING" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_MISSING" in codes
+
+
+def test_artifact_export_receipt_undeclared_edges_and_safe_fallbacks() -> None:
+    store, claim, artifact, receipt = _export_receipt_store("undeclared")
+    extra_claim = copy.deepcopy(claim)
+    extra_claim["id"] = "career_claim:" + "c" * 64
+    store.nodes[extra_claim["id"]] = extra_claim
+    store.create_edge(ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM, receipt["id"], extra_claim["id"])
+    store.edges.append(_edge(ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE, receipt["id"], "customer:SECRET markdown"))
+    store.edges.append(_edge(ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT, receipt["id"], artifact["id"]))
+    store.edges[-1]["to_node_id"] = []
+
+    report = validate_graph_integrity(store)
+    report_json = json.dumps(report, sort_keys=True)
+    codes = _codes(report)
+
+    assert "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_UNDECLARED" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_UNDECLARED" in codes
+    assert "EDGE_TARGET_REF_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_UNDECLARED" not in codes
+    assert "SECRET" not in report_json
+    assert "edge_endpoint:" in report_json
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("claim_count", True, "ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID"),
+        ("claim_count", -1, "ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID"),
+        ("claim_count", 2, "ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID"),
+        ("evidence_count", True, "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID"),
+        ("evidence_count", -1, "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID"),
+        ("evidence_count", 2, "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID"),
+        ("warning_count", True, "ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID"),
+        ("warning_count", -1, "ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID"),
+    ],
+)
+def test_artifact_export_receipt_counts(field: str, value: object, code: str) -> None:
+    store, _, _, receipt = _export_receipt_store(f"counts-{field}-{value}")
+    receipt["properties"]["metadata"][field] = value
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert code in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID" not in codes
+
+
+def test_artifact_export_receipt_read_only_deterministic_filters_and_json() -> None:
+    store, _, _, receipt = _export_receipt_store("determinism", evidence_count=2)
+    receipt["properties"]["status"] = "draft"
+    before = _snapshot(store)
+    reordered = copy.deepcopy(store)
+    reordered.nodes = dict(reversed(list(reordered.nodes.items())))
+    reordered.edges = list(reversed(reordered.edges))
+
+    report = validate_graph_integrity(store, node_types=["ArtifactExportReceipt"])
+    warnings = validate_graph_integrity(store, severities=["warning"])
+
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in _codes(report)
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" not in _codes(warnings)
+    assert validate_graph_integrity(store) == validate_graph_integrity(reordered)
+    assert json.loads(json.dumps(report)) == report
+    assert _snapshot(store) == before
+
+
+def test_artifact_and_receipt_invalid_issues_coexist_without_false_positive() -> None:
+    store, _, artifact, receipt = _export_receipt_store("coexist")
+    artifact["properties"]["status"] = "draft"
+    receipt["properties"]["status"] = "draft"
+
+    codes = _codes(validate_graph_integrity(store))
+
+    assert "PROFESSIONAL_ARTIFACT_STATUS_INVALID" in codes
+    assert "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID" in codes
 
 
 def test_audit_target_refs_rules_are_conservative() -> None:
@@ -2609,6 +3053,72 @@ def test_all_generated_issue_contracts_are_accepted() -> None:
         artifact_report = validate_graph_integrity(artifact_store)
         generated_codes.update(_codes(artifact_report))
         assert validate_graph_integrity_report(artifact_report) is artifact_report
+    receipt_mutations = [
+        lambda _store, receipt: receipt["properties"]["metadata"].__setitem__("artifact_type", ""),
+        lambda _store, receipt: receipt.__setitem__("id", "artifact_export_receipt:" + "c" * 64),
+        lambda _store, receipt: receipt["properties"].__setitem__("export_candidate_id", []),
+        lambda _store, receipt: receipt["properties"].__setitem__("source_type", "legacy"),
+        lambda _store, receipt: receipt["properties"].__setitem__("status", "draft"),
+        lambda _store, receipt: receipt["properties"].__setitem__("export_scope", "public"),
+        lambda _store, receipt: receipt["properties"].__setitem__("export_format", "pdf"),
+        lambda _store, receipt: receipt["properties"].__setitem__("privacy_level", "private"),
+        lambda _store, receipt: receipt["properties"].__setitem__("source_artifact_id", []),
+        lambda _store, receipt: receipt["properties"].__setitem__("source_artifact_id", "artifact:" + "c" * 64),
+        lambda store, receipt: (
+            store.nodes.__setitem__("artifact:" + "c" * 64, _node("artifact:" + "c" * 64, "CareerClaim")),
+            receipt["properties"].__setitem__("source_artifact_id", "artifact:" + "c" * 64),
+        ),
+        lambda store, receipt: store.nodes[receipt["properties"]["source_artifact_id"]]["properties"].__setitem__(
+            "status", "draft"
+        ),
+        lambda store, receipt: store.nodes[receipt["properties"]["source_artifact_id"]]["properties"].__setitem__(
+            "privacy_level", "internal"
+        ),
+        lambda store, _receipt: store.edges.__setitem__(
+            slice(None), [edge for edge in store.edges if edge.get("edge_type") != ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT]
+        ),
+        lambda store, receipt: store.create_edge(
+            ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT, receipt["id"], "artifact:" + "c" * 64
+        ),
+        lambda _store, receipt: receipt["properties"].__setitem__("claim_refs", []),
+        lambda _store, receipt: receipt["properties"].__setitem__("claim_refs", ["career_claim:" + "c" * 64]),
+        lambda store, receipt: (
+            store.nodes.__setitem__("career_claim:" + "c" * 64, _node("career_claim:" + "c" * 64, "EvidenceNode")),
+            receipt["properties"].__setitem__("claim_refs", ["career_claim:" + "c" * 64]),
+        ),
+        lambda store, _receipt: store.edges.__setitem__(
+            slice(None), [edge for edge in store.edges if edge.get("edge_type") != ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM]
+        ),
+        lambda store, receipt: store.create_edge(
+            ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM, receipt["id"], "career_claim:" + "c" * 64
+        ),
+        lambda _store, receipt: receipt["properties"].__setitem__("evidence_refs", []),
+        lambda _store, receipt: receipt["properties"].__setitem__("evidence_refs", ["evidence:" + "c" * 64]),
+        lambda store, receipt: (
+            store.nodes.__setitem__("evidence:" + "c" * 64, _node("evidence:" + "c" * 64, "CareerClaim")),
+            receipt["properties"].__setitem__("evidence_refs", ["evidence:" + "c" * 64]),
+        ),
+        lambda store, _receipt: store.edges.__setitem__(
+            slice(None),
+            [edge for edge in store.edges if edge.get("edge_type") != ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE],
+        ),
+        lambda store, receipt: store.create_edge(
+            ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE, receipt["id"], "evidence:" + "c" * 64
+        ),
+        lambda _store, receipt: receipt["properties"].__setitem__("content_hash", "A" * 64),
+        lambda _store, receipt: receipt["properties"].__setitem__("file_name", "../secret.md"),
+        lambda _store, receipt: receipt["properties"].__setitem__("output_path", "../secret.md"),
+        lambda _store, receipt: receipt["properties"]["metadata"].__setitem__("claim_count", True),
+        lambda _store, receipt: receipt["properties"]["metadata"].__setitem__("evidence_count", True),
+        lambda _store, receipt: receipt["properties"]["metadata"].__setitem__("warning_count", True),
+        lambda _store, receipt: receipt["properties"].__setitem__("reviewed_at", "bad"),
+    ]
+    for index, mutate in enumerate(receipt_mutations):
+        receipt_store, _, _, receipt = _export_receipt_store(f"receipt-{index}")
+        mutate(receipt_store, receipt)
+        receipt_report = validate_graph_integrity(receipt_store)
+        generated_codes.update(_codes(receipt_report))
+        assert validate_graph_integrity_report(receipt_report) is receipt_report
 
     assert generated_codes == ISSUE_CODES
     assert validate_graph_integrity_report(report) is report
