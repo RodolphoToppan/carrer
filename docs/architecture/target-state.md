@@ -60,6 +60,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - isolate observations, patterns, and knowledge generation
 5. **Application extraction**
    - isolate queries, review workflow, and orchestration
+   - current status: a thin `CareerWorkflow` facade lives in `src/carrer/application/` and delegates to existing modules for contribution discovery/promotion, analysis review, claim generation/review, claim-based artifact review, export review, export integrity, repair review, and graph integrity. It preserves explicit human decisions and does not introduce new persisted contracts, automatic acceptance, automatic claim selection, automatic export, or automatic repair.
    - current status: explicit contribution creation and simple contribution queries live in `src/carrer/contributions/`; they validate provenance and privacy
    - current status: deterministic `ContributionCandidate` clustering is available as an explicit read-only query over evidence relationships and structural keys; candidates are not persisted automatically, promotion to `Contribution` requires explicit human review, and rejection records only audit
    - current status: candidate review validates the candidate and current evidence refs, preserves traceability through `Contribution` evidence edges and candidate audit metadata, and does not run impact analysis, semantic similarity, embeddings, AI, Work-to-Impact, artifact generation, or `CareerClaim` generation
