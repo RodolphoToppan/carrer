@@ -9,6 +9,14 @@ from collections import Counter
 from typing import Any, NamedTuple
 
 from carrer.artifacts.claim_based import CLAIM_BASED_ARTIFACT_TYPES
+from carrer.artifacts.claim_export import EXPORT_FORMAT, EXPORT_SCOPES, claim_based_artifact_export_candidate_id
+from carrer.artifacts.claim_export_review import (
+    ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT,
+    ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
+    ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
+    artifact_export_receipt_id,
+    validate_artifact_export_receipt_contract,
+)
 from carrer.artifacts.claim_review import (
     PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
     PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
@@ -132,6 +140,38 @@ ISSUE_CODES = frozenset(
         "PROFESSIONAL_ARTIFACT_EVIDENCE_TYPE_INVALID",
         "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_MISSING",
         "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED",
+        "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_ID_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_EXPORT_CANDIDATE_REF_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_SOURCE_TYPE_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_FORMAT_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_PRIVACY_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_REF_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_NOT_FOUND",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_TYPE_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_STATUS_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_PRIVACY_INCOMPATIBLE",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_MISSING",
+        "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_UNDECLARED",
+        "ARTIFACT_EXPORT_RECEIPT_CLAIM_REFS_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_CLAIM_NOT_FOUND",
+        "ARTIFACT_EXPORT_RECEIPT_CLAIM_TYPE_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_MISSING",
+        "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_UNDECLARED",
+        "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_REFS_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_NOT_FOUND",
+        "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_TYPE_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_MISSING",
+        "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_UNDECLARED",
+        "ARTIFACT_EXPORT_RECEIPT_CONTENT_HASH_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_FILE_NAME_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_OUTPUT_PATH_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID",
+        "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID",
     }
 )
 
@@ -371,6 +411,105 @@ ISSUE_CONTRACTS = {
     "PROFESSIONAL_ARTIFACT_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
         "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
     ),
+    "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ID_INVALID": _IssueContract("error", "node", "nodes", "id", "empty", "empty"),
+    "ARTIFACT_EXPORT_RECEIPT_EXPORT_CANDIDATE_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.export_candidate_id", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_SOURCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.source_type", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.status", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.export_scope", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_FORMAT_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.export_format", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_PRIVACY_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.privacy_level", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.source_artifact_id", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.source_artifact_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.source_artifact_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_STATUS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.source_artifact_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_PRIVACY_INCOMPATIBLE": _IssueContract(
+        "error", "node", "nodes", "properties.source_artifact_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.source_artifact_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.source_artifact_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CLAIM_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.claim_refs", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CLAIM_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CLAIM_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.claim_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_REFS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_MISSING": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_UNDECLARED": _IssueContract(
+        "warning", "node", "nodes", "properties.evidence_refs", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CONTENT_HASH_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.content_hash", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_FILE_NAME_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.file_name", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_OUTPUT_PATH_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.output_path", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.metadata", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.metadata", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.metadata", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID": _IssueContract(
+        "error",
+        "node",
+        "nodes",
+        ("created_at", "properties.candidate_created_at", "properties.review_actor", "properties.reviewed_at"),
+        "empty",
+        "empty",
+    ),
 }
 PERSISTED_REF_PREFIXES = (
     "artifact:",
@@ -430,6 +569,7 @@ def validate_graph_integrity(
         issues.extend(_contribution_analysis_issues(nodes, edges, selected_node_types))
         issues.extend(_career_claim_issues(nodes, edges, selected_node_types))
         issues.extend(_professional_artifact_issues(nodes, edges, selected_node_types))
+        issues.extend(_artifact_export_receipt_issues(nodes, edges, selected_node_types))
         issues.extend(_edge_issues(nodes, edges, selected_node_types))
         issues.extend(_audit_issues(nodes, audit_records, selected_node_types))
         issues = _ordered_issues(_dedupe_issues(issues))
@@ -1370,6 +1510,298 @@ def _professional_artifact_ref_edge_issues(
     return issues
 
 
+def _artifact_export_receipt_issues(
+    nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None
+) -> list[dict[str, Any]]:
+    if node_types is not None and "ArtifactExportReceipt" not in node_types:
+        return []
+    issues: list[dict[str, Any]] = []
+    for key in sorted(nodes, key=_safe_sort_key):
+        node = nodes[key]
+        if not isinstance(node, dict) or node.get("node_type") != "ArtifactExportReceipt":
+            continue
+        issues.extend(_artifact_export_receipt_node_issues(nodes, edges, key, node))
+    return issues
+
+
+def _artifact_export_receipt_node_issues(
+    nodes: dict[Any, Any], edges: list[Any], key: Any, node: dict[str, Any]
+) -> list[dict[str, Any]]:
+    subject = _node_subject_ref(key)
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return []
+
+    path = f"nodes.{subject}.properties"
+    issues: list[dict[str, Any]] = []
+    specific_fields: set[str] = set()
+    id_inputs_valid = True
+
+    def add_issue(code: str, issue_path: str, field: str) -> None:
+        specific_fields.add(field)
+        issues.append(_issue(code, "error", "node", subject, issue_path))
+
+    if props.get("source_type") != "career_claim":
+        add_issue("ARTIFACT_EXPORT_RECEIPT_SOURCE_TYPE_INVALID", f"{path}.source_type", "source_type")
+    if props.get("status") != "exported":
+        add_issue("ARTIFACT_EXPORT_RECEIPT_STATUS_INVALID", f"{path}.status", "status")
+    if props.get("export_scope") not in EXPORT_SCOPES:
+        id_inputs_valid = False
+        add_issue("ARTIFACT_EXPORT_RECEIPT_SCOPE_INVALID", f"{path}.export_scope", "export_scope")
+    if props.get("export_format") != EXPORT_FORMAT:
+        id_inputs_valid = False
+        add_issue("ARTIFACT_EXPORT_RECEIPT_FORMAT_INVALID", f"{path}.export_format", "export_format")
+    if props.get("privacy_level") not in {"internal", "artifact_safe"}:
+        add_issue("ARTIFACT_EXPORT_RECEIPT_PRIVACY_INVALID", f"{path}.privacy_level", "privacy_level")
+    if not _hash(props.get("content_hash")):
+        id_inputs_valid = False
+        add_issue("ARTIFACT_EXPORT_RECEIPT_CONTENT_HASH_INVALID", f"{path}.content_hash", "content_hash")
+    if not _receipt_file_name(props.get("file_name"), props.get("content_hash")):
+        add_issue("ARTIFACT_EXPORT_RECEIPT_FILE_NAME_INVALID", f"{path}.file_name", "file_name")
+    if props.get("output_path") != props.get("file_name") or not _receipt_file_name(
+        props.get("output_path"), props.get("content_hash")
+    ):
+        add_issue("ARTIFACT_EXPORT_RECEIPT_OUTPUT_PATH_INVALID", f"{path}.output_path", "output_path")
+
+    for field in ("candidate_created_at", "reviewed_at"):
+        if not _timestamp(props.get(field), field):
+            add_issue("ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID", f"{path}.{field}", field)
+    if not isinstance(props.get("review_actor"), str) or not props["review_actor"].strip():
+        add_issue("ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID", f"{path}.review_actor", "review_actor")
+    if node.get("created_at") != props.get("reviewed_at") or not _timestamp(node.get("created_at"), "created_at"):
+        add_issue("ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID", f"nodes.{subject}.created_at", "created_at")
+
+    artifact_ref = props.get("source_artifact_id")
+    if not _safe_text_ref(artifact_ref):
+        id_inputs_valid = False
+        add_issue(
+            "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_REF_INVALID",
+            f"{path}.source_artifact_id",
+            "source_artifact_id",
+        )
+    else:
+        assert isinstance(artifact_ref, str)
+        issues.extend(
+            _artifact_export_receipt_artifact_issues(nodes, edges, subject, node.get("id"), props, artifact_ref)
+        )
+
+    claim_refs = _valid_canonical_ref_list(props.get("claim_refs"), required=True)
+    if claim_refs is None:
+        add_issue("ARTIFACT_EXPORT_RECEIPT_CLAIM_REFS_INVALID", f"{path}.claim_refs", "claim_refs")
+    else:
+        issues.extend(
+            _artifact_export_receipt_ref_edge_issues(
+                nodes,
+                edges,
+                subject,
+                node.get("id"),
+                claim_refs,
+                "CareerClaim",
+                ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
+                f"{path}.claim_refs",
+                "ARTIFACT_EXPORT_RECEIPT_CLAIM_NOT_FOUND",
+                "ARTIFACT_EXPORT_RECEIPT_CLAIM_TYPE_INVALID",
+                "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_MISSING",
+                "ARTIFACT_EXPORT_RECEIPT_CLAIM_EDGE_UNDECLARED",
+            )
+        )
+
+    evidence_refs = _valid_canonical_ref_list(props.get("evidence_refs"), required=True)
+    if evidence_refs is None:
+        add_issue("ARTIFACT_EXPORT_RECEIPT_EVIDENCE_REFS_INVALID", f"{path}.evidence_refs", "evidence_refs")
+    else:
+        issues.extend(
+            _artifact_export_receipt_ref_edge_issues(
+                nodes,
+                edges,
+                subject,
+                node.get("id"),
+                evidence_refs,
+                "EvidenceNode",
+                ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
+                f"{path}.evidence_refs",
+                "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_NOT_FOUND",
+                "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_TYPE_INVALID",
+                "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_MISSING",
+                "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_EDGE_UNDECLARED",
+            )
+        )
+
+    metadata = props.get("metadata")
+    if isinstance(metadata, dict):
+        if not _count_matches(metadata.get("claim_count"), claim_refs):
+            add_issue("ARTIFACT_EXPORT_RECEIPT_CLAIM_COUNT_INVALID", f"{path}.metadata", "claim_count")
+        if not _count_matches(metadata.get("evidence_count"), evidence_refs):
+            add_issue("ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID", f"{path}.metadata", "evidence_count")
+        if not _non_negative_int(metadata.get("warning_count")):
+            add_issue("ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID", f"{path}.metadata", "warning_count")
+
+    candidate_id = props.get("export_candidate_id")
+    if not _export_candidate_ref(candidate_id):
+        id_inputs_valid = False
+        add_issue(
+            "ARTIFACT_EXPORT_RECEIPT_EXPORT_CANDIDATE_REF_INVALID",
+            f"{path}.export_candidate_id",
+            "export_candidate_id",
+        )
+    if (
+        id_inputs_valid
+        and isinstance(artifact_ref, str)
+        and isinstance(candidate_id, str)
+        and isinstance(props.get("content_hash"), str)
+    ):
+        expected_candidate = claim_based_artifact_export_candidate_id(
+            artifact_ref,
+            props["export_scope"],
+            props["export_format"],
+            props["content_hash"],
+        )
+        expected_receipt = artifact_export_receipt_id(expected_candidate)
+        if (
+            candidate_id != expected_candidate
+            or node.get("id") != expected_receipt
+            or props.get("id") not in {None, expected_receipt}
+        ):
+            specific_fields.add("id")
+            issues.append(_issue("ARTIFACT_EXPORT_RECEIPT_ID_INVALID", "error", "node", subject, f"nodes.{subject}.id"))
+    if _has_residual_artifact_export_receipt_violation(node, specific_fields):
+        issues.append(
+            _issue(
+                "ARTIFACT_EXPORT_RECEIPT_PROPERTIES_INVALID", "error", "node", subject, f"nodes.{subject}.properties"
+            )
+        )
+    return issues
+
+
+def _artifact_export_receipt_artifact_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    receipt_ref: object,
+    props: dict[str, Any],
+    artifact_ref: str,
+) -> list[dict[str, Any]]:
+    path = f"nodes.{subject}.properties.source_artifact_id"
+    issues: list[dict[str, Any]] = []
+    related = [_safe_issue_ref(artifact_ref, fallback_prefix="provenance_ref:")]
+    target = nodes.get(artifact_ref)
+    valid_target = False
+    if target is None:
+        issues.append(
+            _issue("ARTIFACT_EXPORT_RECEIPT_ARTIFACT_NOT_FOUND", "warning", "node", subject, path, related_refs=related)
+        )
+    elif not isinstance(target, dict) or target.get("node_type") != "ProfessionalArtifact":
+        issues.append(
+            _issue(
+                "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_TYPE_INVALID", "error", "node", subject, path, related_refs=related
+            )
+        )
+    else:
+        valid_target = True
+        target_props = target.get("properties")
+        if not isinstance(target_props, dict) or target_props.get("status") != "accepted":
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_STATUS_INVALID",
+                    "error",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=related,
+                )
+            )
+        if _receipt_privacy_incompatible(
+            props.get("export_scope"), target_props if isinstance(target_props, dict) else {}
+        ):
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_PRIVACY_INCOMPATIBLE",
+                    "error",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=related,
+                )
+            )
+        if not _has_edge(edges, ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT, receipt_ref, artifact_ref):
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_MISSING",
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=related,
+                )
+            )
+    for target_ref in _edge_targets(edges, ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT, receipt_ref):
+        if target_ref != artifact_ref:
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_RECEIPT_ARTIFACT_EDGE_UNDECLARED",
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=[_safe_issue_ref(target_ref, fallback_prefix="edge_endpoint:")],
+                )
+            )
+    return issues if valid_target or target is None or isinstance(target, dict) else issues
+
+
+def _artifact_export_receipt_ref_edge_issues(
+    nodes: dict[Any, Any],
+    edges: list[Any],
+    subject: str,
+    receipt_ref: object,
+    declared_refs: list[str],
+    expected_type: str,
+    edge_type: str,
+    path: str,
+    not_found_code: str,
+    type_invalid_code: str,
+    edge_missing_code: str,
+    edge_undeclared_code: str,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    valid_targets = []
+    for ref in declared_refs:
+        related = [_safe_issue_ref(ref, fallback_prefix="provenance_ref:")]
+        target = nodes.get(ref)
+        if target is None:
+            issues.append(_issue(not_found_code, "warning", "node", subject, path, related_refs=related))
+        elif not isinstance(target, dict) or target.get("node_type") != expected_type:
+            issues.append(_issue(type_invalid_code, "error", "node", subject, path, related_refs=related))
+        else:
+            valid_targets.append(ref)
+    edge_targets = _edge_targets(edges, edge_type, receipt_ref)
+    for ref in valid_targets:
+        if ref not in edge_targets:
+            issues.append(
+                _issue(
+                    edge_missing_code,
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=[_safe_issue_ref(ref, fallback_prefix="provenance_ref:")],
+                )
+            )
+    for target in edge_targets:
+        if target not in declared_refs:
+            issues.append(
+                _issue(
+                    edge_undeclared_code,
+                    "warning",
+                    "node",
+                    subject,
+                    path,
+                    related_refs=[_safe_issue_ref(target, fallback_prefix="edge_endpoint:")],
+                )
+            )
+    return issues
+
+
 def _claim_based_professional_artifact_identity_mismatch(node: dict[str, Any], props: dict[str, Any]) -> bool:
     source_artifact_id = props.get("source_artifact_id")
     if not isinstance(source_artifact_id, str) or not source_artifact_id:
@@ -1440,6 +1872,88 @@ def _has_residual_professional_artifact_violation(
         props["evidence_refs"] = []
     try:
         validate_professional_artifact(candidate)
+    except ValueError:
+        return True
+    return False
+
+
+def _has_residual_artifact_export_receipt_violation(node: dict[str, Any], specific_fields: set[str]) -> bool:
+    candidate = copy.deepcopy(node)
+    props = candidate.get("properties")
+    if not isinstance(props, dict):
+        return False
+    if "source_type" in specific_fields:
+        props["source_type"] = "career_claim"
+    if "source_artifact_id" in specific_fields:
+        props["source_artifact_id"] = f"artifact:{'0' * 64}"
+    if "export_scope" in specific_fields:
+        props["export_scope"] = "internal"
+    if "export_format" in specific_fields:
+        props["export_format"] = EXPORT_FORMAT
+    if "privacy_level" in specific_fields:
+        props["privacy_level"] = "artifact_safe"
+    if specific_fields & {"content_hash", "file_name", "output_path"}:
+        props["content_hash"] = "0" * 64
+        props["file_name"] = "artifact-export-000000000000.md"
+        props["output_path"] = props["file_name"]
+    if "candidate_created_at" in specific_fields:
+        props["candidate_created_at"] = "2000-01-01T00:00:00+00:00"
+    if "reviewed_at" in specific_fields or "created_at" in specific_fields:
+        props["reviewed_at"] = "2000-01-01T00:00:00+00:00"
+        candidate["created_at"] = props["reviewed_at"]
+    if "review_actor" in specific_fields:
+        props["review_actor"] = "human"
+    if "status" in specific_fields:
+        props["status"] = "exported"
+    if "claim_refs" in specific_fields:
+        props["claim_refs"] = [f"career_claim:{'0' * 64}"]
+    if "evidence_refs" in specific_fields:
+        props["evidence_refs"] = [f"evidence:{'0' * 64}"]
+
+    metadata = props.get("metadata")
+    if isinstance(metadata, dict):
+        if "claim_refs" in specific_fields:
+            metadata["claim_count"] = len(props["claim_refs"])
+        elif "claim_count" in specific_fields:
+            metadata["claim_count"] = len(props["claim_refs"]) if isinstance(props.get("claim_refs"), list) else 1
+        if "evidence_refs" in specific_fields:
+            metadata["evidence_count"] = len(props["evidence_refs"])
+        elif "evidence_count" in specific_fields:
+            metadata["evidence_count"] = (
+                len(props["evidence_refs"]) if isinstance(props.get("evidence_refs"), list) else 1
+            )
+        if "warning_count" in specific_fields:
+            metadata["warning_count"] = 0
+
+    identity_fields = {
+        "id",
+        "source_artifact_id",
+        "export_scope",
+        "export_format",
+        "content_hash",
+        "export_candidate_id",
+    }
+    if specific_fields & identity_fields:
+        source_artifact_id = props.get("source_artifact_id")
+        export_scope = props.get("export_scope")
+        export_format = props.get("export_format")
+        content_hash = props.get("content_hash")
+        if (
+            _safe_text_ref(source_artifact_id)
+            and isinstance(source_artifact_id, str)
+            and export_scope in EXPORT_SCOPES
+            and export_format == EXPORT_FORMAT
+            and isinstance(content_hash, str)
+            and _hash(content_hash)
+        ):
+            props["export_candidate_id"] = claim_based_artifact_export_candidate_id(
+                source_artifact_id, export_scope, export_format, content_hash
+            )
+            candidate["id"] = artifact_export_receipt_id(props["export_candidate_id"])
+            if "id" in props:
+                props["id"] = candidate["id"]
+    try:
+        validate_artifact_export_receipt_contract(candidate)
     except ValueError:
         return True
     return False
@@ -1522,6 +2036,48 @@ def _safe_text_ref(value: object) -> bool:
         return False
     prefix, separator, suffix = value.partition(":")
     return separator == ":" and bool(prefix) and _HASH_RE.fullmatch(suffix) is not None
+
+
+def _export_candidate_ref(value: object) -> bool:
+    return (
+        isinstance(value, str) and value.startswith("claim_based_artifact_export_candidate:") and _safe_text_ref(value)
+    )
+
+
+def _hash(value: object) -> bool:
+    return isinstance(value, str) and _HASH_RE.fullmatch(value) is not None
+
+
+def _receipt_file_name(file_name: object, content_hash: object) -> bool:
+    if not isinstance(file_name, str) or not isinstance(content_hash, str):
+        return False
+    return (
+        file_name.endswith(".md")
+        and "/" not in file_name
+        and "\\" not in file_name
+        and ".." not in file_name
+        and len(file_name) > len(".md")
+        and file_name[-15:-3] == content_hash[:12]
+    )
+
+
+def _count_matches(count: object, refs: list[str] | None) -> bool:
+    if refs is None:
+        return _non_negative_int(count)
+    return _non_negative_int(count) and count == len(refs)
+
+
+def _non_negative_int(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
+def _receipt_privacy_incompatible(export_scope: object, artifact_props: dict[str, Any]) -> bool:
+    privacy = artifact_props.get("privacy_level")
+    if export_scope == "external":
+        return privacy != "artifact_safe"
+    if export_scope == "internal":
+        return privacy not in {"internal", "artifact_safe"}
+    return False
 
 
 def _single_canonical_ref(value: object) -> str | None:
@@ -2133,7 +2689,7 @@ def _safe_shape(value: object) -> object:
                 key=_safe_json,
             ),
         }
-    return {"kind": "non_json_value", "type": f"{type(value).__module__}.{type(value).__qualname__}"}
+    return {"kind": "non_json_value"}
 
 
 def _canonical_node_items(nodes: dict[Any, Any]) -> list[dict[str, object]]:
@@ -2209,14 +2765,24 @@ def _is_valid_issue_path(value: object) -> bool:
         return parts[2] == "properties" and parts[3] in {
             "artifact_type",
             "claim_refs",
+            "candidate_created_at",
+            "content_hash",
             "status",
             "privacy_level",
             "confidence",
             "contribution_ref",
             "contribution_refs",
             "evidence_refs",
+            "export_candidate_id",
+            "export_format",
+            "export_scope",
+            "file_name",
             "observation_refs",
             "knowledge_refs",
+            "output_path",
+            "review_actor",
+            "reviewed_at",
+            "source_artifact_id",
             "source_type",
             "source_refs",
             "metadata",
