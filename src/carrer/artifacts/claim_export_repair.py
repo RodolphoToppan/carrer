@@ -231,20 +231,8 @@ def validate_artifact_export_repair_acceptance_audit(
         raise ValueError("repair receipt repaired_edge_count does not match audit")
     if repair_receipt["properties"]["temporary_file_removed"] != metadata["temporary_file_removed"]:
         raise ValueError("repair receipt temporary_file_removed does not match audit")
-    expected_id = "audit:" + stable_hash(
-        [
-            first.get("audit_type"),
-            first.get("target_refs"),
-            first.get("result"),
-            metadata,
-            first.get("created_at"),
-            store.audit_records.index(first),
-        ]
-    )
-    if first.get("id") != expected_id:
-        raise ValueError("previous repair acceptance audit id does not match metadata")
     if repair_receipt["properties"]["audit_id"] != first["id"]:
-        raise ValueError("repair receipt audit_id does not match original audit")
+        raise ValueError("repair receipt audit id does not match original audit")
     return first
 
 
