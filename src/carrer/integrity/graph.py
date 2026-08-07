@@ -10,6 +10,12 @@ from typing import Any, NamedTuple
 
 from carrer.artifacts.claim_based import CLAIM_BASED_ARTIFACT_TYPES
 from carrer.artifacts.claim_export import EXPORT_FORMAT, EXPORT_SCOPES, claim_based_artifact_export_candidate_id
+from carrer.artifacts.claim_export_integrity import REPAIRABLE_ISSUES
+from carrer.artifacts.claim_export_repair import (
+    REPAIR_ACTIONS,
+    artifact_export_repair_receipt_id,
+    validate_artifact_export_repair_receipt_contract,
+)
 from carrer.artifacts.claim_export_review import (
     ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT,
     ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
@@ -172,6 +178,22 @@ ISSUE_CODES = frozenset(
         "ARTIFACT_EXPORT_RECEIPT_EVIDENCE_COUNT_INVALID",
         "ARTIFACT_EXPORT_RECEIPT_WARNING_COUNT_INVALID",
         "ARTIFACT_EXPORT_RECEIPT_REVIEW_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_ID_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_CANDIDATE_REF_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPORT_REF_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_REF_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_NOT_FOUND",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_TYPE_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_ISSUE_CODES_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIRED_EDGE_COUNT_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_TEMPORARY_FILE_REMOVED_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_REF_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_NOT_FOUND",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_INVALID",
+        "ARTIFACT_EXPORT_REPAIR_RECEIPT_DUPLICATED",
     }
 )
 
@@ -510,6 +532,52 @@ ISSUE_CONTRACTS = {
         "empty",
         "empty",
     ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_ID_INVALID": _IssueContract("error", "node", "nodes", "id", "empty", "empty"),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_CANDIDATE_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.repair_candidate_id", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPORT_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.report_id", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.receipt_id", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.receipt_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_TYPE_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.receipt_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_ISSUE_CODES_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.issue_codes", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.repair_actions", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIRED_EDGE_COUNT_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.repaired_edge_count", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_TEMPORARY_FILE_REMOVED_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.temporary_file_removed", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID": _IssueContract(
+        "error", "node", "nodes", ("created_at", "properties.actor", "properties.decided_at"), "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_REF_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.audit_id", "empty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_NOT_FOUND": _IssueContract(
+        "warning", "node", "nodes", "properties.audit_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_INVALID": _IssueContract(
+        "error", "node", "nodes", "properties.audit_id", "nonempty", "empty"
+    ),
+    "ARTIFACT_EXPORT_REPAIR_RECEIPT_DUPLICATED": _IssueContract(
+        "error", "node", "nodes", "properties.repair_candidate_id", "nonempty", "empty"
+    ),
 }
 PERSISTED_REF_PREFIXES = (
     "artifact:",
@@ -570,6 +638,7 @@ def validate_graph_integrity(
         issues.extend(_career_claim_issues(nodes, edges, selected_node_types))
         issues.extend(_professional_artifact_issues(nodes, edges, selected_node_types))
         issues.extend(_artifact_export_receipt_issues(nodes, edges, selected_node_types))
+        issues.extend(_artifact_export_repair_receipt_issues(nodes, audit_records, selected_node_types))
         issues.extend(_edge_issues(nodes, edges, selected_node_types))
         issues.extend(_audit_issues(nodes, audit_records, selected_node_types))
         issues = _ordered_issues(_dedupe_issues(issues))
@@ -1959,6 +2028,240 @@ def _has_residual_artifact_export_receipt_violation(node: dict[str, Any], specif
     return False
 
 
+def _artifact_export_repair_receipt_issues(
+    nodes: dict[Any, Any], audit_records: list[Any], node_types: list[str] | None
+) -> list[dict[str, Any]]:
+    if node_types is not None and "ArtifactExportRepairReceipt" not in node_types:
+        return []
+    issues: list[dict[str, Any]] = []
+    candidate_counts = Counter(
+        node["properties"].get("repair_candidate_id")
+        for node in nodes.values()
+        if isinstance(node, dict)
+        and node.get("node_type") == "ArtifactExportRepairReceipt"
+        and isinstance(node.get("properties"), dict)
+        and _repair_candidate_ref(node["properties"].get("repair_candidate_id"))
+    )
+    for key in sorted(nodes, key=_safe_sort_key):
+        node = nodes[key]
+        if not isinstance(node, dict) or node.get("node_type") != "ArtifactExportRepairReceipt":
+            continue
+        issues.extend(_artifact_export_repair_receipt_node_issues(nodes, audit_records, key, node, candidate_counts))
+    return issues
+
+
+def _artifact_export_repair_receipt_node_issues(
+    nodes: dict[Any, Any],
+    audit_records: list[Any],
+    key: Any,
+    node: dict[str, Any],
+    candidate_counts: Counter[str],
+) -> list[dict[str, Any]]:
+    subject = _node_subject_ref(key)
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return []
+
+    path = f"nodes.{subject}.properties"
+    issues: list[dict[str, Any]] = []
+    specific_fields: set[str] = set()
+    identity_inputs_valid = True
+
+    def add_issue(code: str, issue_path: str, field: str) -> None:
+        specific_fields.add(field)
+        issues.append(_issue(code, "error", "node", subject, issue_path))
+
+    candidate_id = props.get("repair_candidate_id")
+    if not _repair_candidate_ref(candidate_id):
+        identity_inputs_valid = False
+        add_issue(
+            "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_CANDIDATE_REF_INVALID",
+            f"{path}.repair_candidate_id",
+            "repair_candidate_id",
+        )
+    elif isinstance(candidate_id, str) and candidate_counts[candidate_id] > 1:
+        issues.append(
+            _issue(
+                "ARTIFACT_EXPORT_REPAIR_RECEIPT_DUPLICATED",
+                "error",
+                "node",
+                subject,
+                f"{path}.repair_candidate_id",
+                related_refs=[_safe_issue_ref(candidate_id, fallback_prefix="provenance_ref:")],
+            )
+        )
+
+    report_id = props.get("report_id")
+    if not _artifact_export_integrity_report_ref(report_id):
+        add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_REPORT_REF_INVALID", f"{path}.report_id", "report_id")
+
+    receipt_id = props.get("receipt_id")
+    if not _artifact_export_receipt_ref(receipt_id):
+        add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_REF_INVALID", f"{path}.receipt_id", "receipt_id")
+    else:
+        assert isinstance(receipt_id, str)
+        related = [_safe_issue_ref(receipt_id, fallback_prefix="provenance_ref:")]
+        receipt = nodes.get(receipt_id)
+        if receipt is None:
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_NOT_FOUND",
+                    "warning",
+                    "node",
+                    subject,
+                    f"{path}.receipt_id",
+                    related_refs=related,
+                )
+            )
+        elif not isinstance(receipt, dict) or receipt.get("node_type") != "ArtifactExportReceipt":
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_REPAIR_RECEIPT_EXPORT_RECEIPT_TYPE_INVALID",
+                    "error",
+                    "node",
+                    subject,
+                    f"{path}.receipt_id",
+                    related_refs=related,
+                )
+            )
+
+    issue_codes = _valid_ordered_known_strings(props.get("issue_codes"), REPAIRABLE_ISSUES)
+    if issue_codes is None:
+        add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_ISSUE_CODES_INVALID", f"{path}.issue_codes", "issue_codes")
+    repair_actions = _valid_ordered_known_strings(props.get("repair_actions"), REPAIR_ACTIONS)
+    if repair_actions is None:
+        add_issue(
+            "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIR_ACTIONS_INVALID",
+            f"{path}.repair_actions",
+            "repair_actions",
+        )
+    if not _non_negative_int(props.get("repaired_edge_count")):
+        add_issue(
+            "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIRED_EDGE_COUNT_INVALID",
+            f"{path}.repaired_edge_count",
+            "repaired_edge_count",
+        )
+    if not isinstance(props.get("temporary_file_removed"), bool):
+        add_issue(
+            "ARTIFACT_EXPORT_REPAIR_RECEIPT_TEMPORARY_FILE_REMOVED_INVALID",
+            f"{path}.temporary_file_removed",
+            "temporary_file_removed",
+        )
+    if (
+        _non_negative_int(props.get("repaired_edge_count"))
+        and isinstance(props.get("temporary_file_removed"), bool)
+        and props["repaired_edge_count"] == 0
+        and props["temporary_file_removed"] is False
+    ):
+        add_issue(
+            "ARTIFACT_EXPORT_REPAIR_RECEIPT_REPAIRED_EDGE_COUNT_INVALID",
+            f"{path}.repaired_edge_count",
+            "repaired_edge_count",
+        )
+
+    for field in ("decided_at",):
+        if not _timestamp(props.get(field), field):
+            add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID", f"{path}.{field}", field)
+    if not isinstance(props.get("actor"), str) or not props["actor"].strip():
+        add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID", f"{path}.actor", "actor")
+    if node.get("created_at") != props.get("decided_at") or not _timestamp(node.get("created_at"), "created_at"):
+        add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_REVIEW_INVALID", f"nodes.{subject}.created_at", "created_at")
+
+    audit_id = props.get("audit_id")
+    if not _audit_id_ref(audit_id):
+        add_issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_REF_INVALID", f"{path}.audit_id", "audit_id")
+    else:
+        assert isinstance(audit_id, str)
+        audit = _audit_record_by_id(audit_records, audit_id)
+        if audit is None:
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_NOT_FOUND",
+                    "warning",
+                    "node",
+                    subject,
+                    f"{path}.audit_id",
+                    related_refs=[audit_id],
+                )
+            )
+        elif _repair_receipt_audit_invalid(audit, props):
+            issues.append(
+                _issue(
+                    "ARTIFACT_EXPORT_REPAIR_RECEIPT_AUDIT_INVALID",
+                    "error",
+                    "node",
+                    subject,
+                    f"{path}.audit_id",
+                    related_refs=[audit_id],
+                )
+            )
+
+    if identity_inputs_valid and isinstance(candidate_id, str):
+        expected_id = artifact_export_repair_receipt_id(candidate_id)
+        if node.get("id") != expected_id or props.get("id") not in {None, expected_id}:
+            specific_fields.add("id")
+            issues.append(
+                _issue("ARTIFACT_EXPORT_REPAIR_RECEIPT_ID_INVALID", "error", "node", subject, f"nodes.{subject}.id")
+            )
+
+    if _has_residual_artifact_export_repair_receipt_violation(node, specific_fields):
+        issues.append(
+            _issue(
+                "ARTIFACT_EXPORT_REPAIR_RECEIPT_PROPERTIES_INVALID",
+                "error",
+                "node",
+                subject,
+                f"nodes.{subject}.properties",
+            )
+        )
+    return issues
+
+
+def _has_residual_artifact_export_repair_receipt_violation(node: dict[str, Any], specific_fields: set[str]) -> bool:
+    candidate = copy.deepcopy(node)
+    props = candidate.get("properties")
+    if not isinstance(props, dict):
+        return False
+    if "repair_candidate_id" in specific_fields:
+        props["repair_candidate_id"] = f"artifact_export_repair_candidate:{'0' * 64}"
+    if "report_id" in specific_fields:
+        props["report_id"] = f"artifact_export_integrity_report:{'0' * 64}"
+    if "receipt_id" in specific_fields:
+        props["receipt_id"] = f"artifact_export_receipt:{'0' * 64}"
+    if "issue_codes" in specific_fields:
+        props["issue_codes"] = ["artifact_edge_missing"]
+    if "repair_actions" in specific_fields:
+        props["repair_actions"] = ["create_missing_artifact_edge"]
+    if "repaired_edge_count" in specific_fields:
+        props["repaired_edge_count"] = 1
+    if "temporary_file_removed" in specific_fields:
+        props["temporary_file_removed"] = False
+    if "actor" in specific_fields:
+        props["actor"] = "human"
+    if "decided_at" in specific_fields or "created_at" in specific_fields:
+        props["decided_at"] = "2000-01-01T00:00:00+00:00"
+        candidate["created_at"] = props["decided_at"]
+    if "audit_id" in specific_fields:
+        props["audit_id"] = f"audit:{'0' * 64}"
+    if specific_fields & {
+        "repair_candidate_id",
+        "report_id",
+        "receipt_id",
+        "issue_codes",
+        "repair_actions",
+        "repaired_edge_count",
+        "temporary_file_removed",
+        "actor",
+        "decided_at",
+    }:
+        _refresh_repair_receipt_derived_fields(candidate)
+    try:
+        validate_artifact_export_repair_receipt_contract(candidate)
+    except ValueError:
+        return True
+    return False
+
+
 def _edge_issues(nodes: dict[Any, Any], edges: list[Any], node_types: list[str] | None) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     valid_node_ids = {key for key, node in nodes.items() if isinstance(key, str) and isinstance(node, dict)}
@@ -2042,6 +2345,22 @@ def _export_candidate_ref(value: object) -> bool:
     return (
         isinstance(value, str) and value.startswith("claim_based_artifact_export_candidate:") and _safe_text_ref(value)
     )
+
+
+def _repair_candidate_ref(value: object) -> bool:
+    return isinstance(value, str) and value.startswith("artifact_export_repair_candidate:") and _safe_text_ref(value)
+
+
+def _artifact_export_integrity_report_ref(value: object) -> bool:
+    return isinstance(value, str) and value.startswith("artifact_export_integrity_report:") and _safe_text_ref(value)
+
+
+def _artifact_export_receipt_ref(value: object) -> bool:
+    return isinstance(value, str) and value.startswith("artifact_export_receipt:") and _safe_text_ref(value)
+
+
+def _audit_id_ref(value: object) -> bool:
+    return isinstance(value, str) and value.startswith("audit:") and _safe_text_ref(value)
 
 
 def _hash(value: object) -> bool:
@@ -2223,6 +2542,117 @@ def _valid_ordered_unique_strings(value: object) -> bool:
     if any(not isinstance(item, str) or not item.strip() for item in value):
         return False
     return value == sorted(set(value))
+
+
+def _valid_ordered_known_strings(value: object, allowed: frozenset[str]) -> list[str] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    if any(not isinstance(item, str) or item not in allowed for item in value):
+        return None
+    if value != sorted(set(value)):
+        return None
+    return value
+
+
+def _audit_record_by_id(audit_records: list[Any], audit_id: str) -> dict[str, Any] | None:
+    matches = [record for record in audit_records if isinstance(record, dict) and record.get("id") == audit_id]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _repair_receipt_audit_invalid(audit: dict[str, Any], props: dict[str, Any]) -> bool:
+    metadata = audit.get("metadata")
+    if not isinstance(metadata, dict):
+        return True
+    expected_targets = [props.get("receipt_id"), props.get("report_id"), props.get("repair_candidate_id")]
+    expected = {
+        "audit_type": "artifact_export_repair_accepted",
+        "result": "accepted",
+        "actor": props.get("actor"),
+        "created_at": props.get("decided_at"),
+        "target_refs": expected_targets,
+        "metadata.actor": props.get("actor"),
+        "metadata.decided_at": props.get("decided_at"),
+        "metadata.report_id": props.get("report_id"),
+        "metadata.repair_candidate_id": props.get("repair_candidate_id"),
+        "metadata.receipt_id": props.get("receipt_id"),
+        "metadata.issue_codes": props.get("issue_codes"),
+        "metadata.repair_actions": props.get("repair_actions"),
+        "metadata.initial_status": "repairable",
+        "metadata.final_status": "consistent",
+        "metadata.applied": True,
+        "metadata.repaired_edge_count": props.get("repaired_edge_count"),
+        "metadata.temporary_file_removed": props.get("temporary_file_removed"),
+        "metadata.original_decision_fingerprint": props.get("original_decision_fingerprint"),
+    }
+    actual = {
+        "audit_type": audit.get("audit_type"),
+        "result": audit.get("result"),
+        "actor": audit.get("actor"),
+        "created_at": audit.get("created_at"),
+        "target_refs": audit.get("target_refs"),
+        "metadata.actor": metadata.get("actor"),
+        "metadata.decided_at": metadata.get("decided_at"),
+        "metadata.report_id": metadata.get("report_id"),
+        "metadata.repair_candidate_id": metadata.get("repair_candidate_id"),
+        "metadata.receipt_id": metadata.get("receipt_id"),
+        "metadata.issue_codes": metadata.get("issue_codes"),
+        "metadata.repair_actions": metadata.get("repair_actions"),
+        "metadata.initial_status": metadata.get("initial_status"),
+        "metadata.final_status": metadata.get("final_status"),
+        "metadata.applied": metadata.get("applied"),
+        "metadata.repaired_edge_count": metadata.get("repaired_edge_count"),
+        "metadata.temporary_file_removed": metadata.get("temporary_file_removed"),
+        "metadata.original_decision_fingerprint": metadata.get("original_decision_fingerprint"),
+    }
+    if actual != expected:
+        return True
+    if type(metadata.get("repaired_edge_count")) is not int or metadata["repaired_edge_count"] < 0:
+        return True
+    if not isinstance(metadata.get("temporary_file_removed"), bool):
+        return True
+    return metadata["repaired_edge_count"] == 0 and metadata["temporary_file_removed"] is False
+
+
+def _refresh_repair_receipt_derived_fields(node: dict[str, Any]) -> None:
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return
+    candidate_id = props.get("repair_candidate_id")
+    if isinstance(candidate_id, str) and _repair_candidate_ref(candidate_id):
+        node["id"] = artifact_export_repair_receipt_id(candidate_id)
+        if "id" in props:
+            props["id"] = node["id"]
+    if not all(
+        isinstance(props.get(field), str)
+        for field in ("repair_candidate_id", "report_id", "receipt_id", "actor", "decided_at")
+    ):
+        return
+    issue_codes = props.get("issue_codes")
+    repair_actions = props.get("repair_actions")
+    repaired_edges = props.get("repaired_edge_count")
+    removed_tmp = props.get("temporary_file_removed")
+    if (
+        not isinstance(issue_codes, list)
+        or not isinstance(repair_actions, list)
+        or not _non_negative_int(repaired_edges)
+        or not isinstance(removed_tmp, bool)
+    ):
+        return
+    props["original_decision_fingerprint"] = stable_hash(
+        [
+            props["repair_candidate_id"],
+            props["report_id"],
+            props["receipt_id"],
+            props["actor"],
+            props["decided_at"],
+            issue_codes,
+            repair_actions,
+            repaired_edges,
+            removed_tmp,
+        ]
+    )
 
 
 def _has_residual_contribution_contract_error(node: dict[Any, Any], specific_failures: set[str]) -> bool:
@@ -2782,9 +3212,19 @@ def _is_valid_issue_path(value: object) -> bool:
             "output_path",
             "review_actor",
             "reviewed_at",
+            "repair_actions",
+            "repair_candidate_id",
+            "repaired_edge_count",
+            "report_id",
+            "receipt_id",
             "source_artifact_id",
             "source_type",
             "source_refs",
+            "temporary_file_removed",
+            "actor",
+            "audit_id",
+            "decided_at",
+            "issue_codes",
             "metadata",
         }
     if collection == "edges":
