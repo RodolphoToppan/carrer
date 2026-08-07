@@ -78,6 +78,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - future status: broader artifact types may consume accepted `CareerClaim` records, but automatic selection, rewriting, persistence, publication, external integration, upload, or pipeline execution require a separate accepted decision.
 7. **Interface adapters**
    - keep scripts/CLI/API as thin entrypoints
+   - current status: a stdlib `argparse` CLI lives in `src/carrer/interfaces/` as a read-only adapter over `CareerWorkflow`; it loads an explicitly provided existing JSON graph store and delegates query/status/integrity commands without persistence or domain decisions.
 ## Real Risks and Mitigations
 - **Import cycles**
   - enforce dependency direction and keep contracts in `ports`
