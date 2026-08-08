@@ -78,7 +78,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
    - future status: broader artifact types may consume accepted `CareerClaim` records, but automatic selection, rewriting, persistence, publication, external integration, upload, or pipeline execution require a separate accepted decision.
 7. **Interface adapters**
    - keep scripts/CLI/API as thin entrypoints
-   - current status: a stdlib `argparse` CLI lives in `src/carrer/interfaces/` as a read-only adapter over `CareerWorkflow`; it loads an explicitly provided existing JSON graph store and delegates query/status/integrity commands without persistence or domain decisions.
+   - current status: a stdlib `argparse` CLI lives in `src/carrer/interfaces/` as a thin adapter over `CareerWorkflow`; it loads an explicitly provided existing JSON graph store, delegates query/status/integrity commands without persistence, and delegates only the first narrow mutable human decision commands for current regenerated `ContributionCandidate` promotion/rejection. Those mutable commands verify the resulting decision state in memory after successful application-layer review, then save the graph through atomic replacement as the final critical operation. CLI tests reload the saved JSON store to prove durable persistence.
 ## Real Risks and Mitigations
 - **Import cycles**
   - enforce dependency direction and keep contracts in `ports`
@@ -90,6 +90,7 @@ This sequence consolidates the stable guidance from the previous extraction mapp
   - preserve public MVP imports during transition and avoid data format changes
 ## Compatibility Strategy
 - Keep graph JSON schema and persisted field values stable
+- Preserve atomic JSON graph replacement semantics for durable local decisions.
 - Keep `source_export_v1` as canonical ingestion contract
 - Preserve behavior of privacy filtering and evidence immutability
 - Maintain compatibility imports from `career_intelligence_mvp.py` while extraction progresses

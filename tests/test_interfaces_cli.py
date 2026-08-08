@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from carrer.application import CareerWorkflow
 from carrer.domain.models import evidence_node
 from carrer.interfaces import cli
@@ -101,12 +103,42 @@ def _run(argv: list[str]) -> tuple[int, str, str]:
     return code, stdout.getvalue(), stderr.getvalue()
 
 
+def _candidate_id(store_path: Path) -> str:
+    return CareerWorkflow(JsonGraphStorage.load(store_path)).discover_contribution_candidates()[0]["id"]
+
+
 def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
     store = tmp_path / "graph.json"
     commands = [
         ["--store", str(store), "status"],
         ["--store", str(store), "contributions", "list"],
         ["--store", str(store), "contributions", "discover"],
+        [
+            "--store",
+            str(store),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            "c:1",
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        [
+            "--store",
+            str(store),
+            "contributions",
+            "reject",
+            "--candidate-id",
+            "c:1",
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+            "--reason",
+            "no",
+        ],
         ["--store", str(store), "analyses", "list"],
         ["--store", str(store), "claims", "list"],
         ["--store", str(store), "artifacts", "list"],
@@ -116,6 +148,22 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
 
     for command in commands:
         assert cli.build_parser().parse_args(command).store == store
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["contributions", "promote", "--actor", "human", "--decided-at", NOW],
+        ["contributions", "promote", "--candidate-id", "c:1", "--decided-at", NOW],
+        ["contributions", "promote", "--candidate-id", "c:1", "--actor", "human"],
+        ["contributions", "reject", "--actor", "human", "--decided-at", NOW, "--reason", "no"],
+        ["contributions", "reject", "--candidate-id", "c:1", "--decided-at", NOW, "--reason", "no"],
+        ["contributions", "reject", "--candidate-id", "c:1", "--actor", "human", "--reason", "no"],
+    ],
+)
+def test_contribution_decision_required_parser_arguments(tmp_path: Path, command: list[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--store", str(tmp_path / "graph.json"), *command])
 
 
 def test_missing_store_returns_controlled_non_zero_error(tmp_path: Path) -> None:
@@ -187,6 +235,343 @@ def test_contributions_discover_remains_read_only(tmp_path: Path) -> None:
     assert code == 0
     assert stderr == ""
     assert json.loads(stdout)
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_contributions_promote_delegates_persists_and_reloads(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ]
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+    contribution = reloaded.nodes_by_type("Contribution")[0]
+
+    assert code == 0
+    assert stderr == ""
+    assert f"candidate_id: {candidate_id}" in stdout
+    assert f"contribution_id: {contribution['id']}" in stdout
+    assert "title" not in stdout
+    assert contribution["properties"]["metadata"]["candidate_id"] == candidate_id
+    assert contribution["properties"]["evidence_refs"]
+    assert any(record["audit_type"] == "contribution_candidate_promoted" for record in reloaded.audit_records)
+
+
+def test_contributions_promote_json_outputs_application_result(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+
+    code, stdout, stderr = _run(
+        [
+            "--json",
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ]
+    )
+    payload = json.loads(stdout)
+
+    assert code == 0
+    assert stderr == ""
+    assert payload["candidate_id"] == candidate_id
+    assert payload["decision"] == "promoted"
+    assert payload["created"] is True
+    assert payload["contribution"]["node_type"] == "Contribution"
+
+
+def test_contributions_promote_is_idempotent_according_to_domain(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+    command = [
+        "--json",
+        "--store",
+        str(store_path),
+        "contributions",
+        "promote",
+        "--candidate-id",
+        candidate_id,
+        "--actor",
+        "human",
+        "--decided-at",
+        NOW,
+    ]
+
+    first = _run(command)
+    second = _run(command)
+
+    assert json.loads(first[1])["created"] is True
+    assert json.loads(second[1])["created"] is False
+    assert len(JsonGraphStorage.load(store_path).nodes_by_type("Contribution")) == 1
+
+
+def test_contributions_reject_delegates_persists_only_audit_and_reloads(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "reject",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+            "--reason",
+            "not mine",
+        ]
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+
+    assert code == 0
+    assert stderr == ""
+    assert "decision: rejected" in stdout
+    assert f"candidate_id: {candidate_id}" in stdout
+    assert "reason: not mine" in stdout
+    assert reloaded.nodes_by_type("Contribution") == []
+    assert reloaded.edges == []
+    assert [record["audit_type"] for record in reloaded.audit_records] == ["contribution_candidate_rejected"]
+
+
+def test_missing_contribution_candidate_fails_without_modifying_file(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    before = store_path.read_text(encoding="utf-8")
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            "contribution_candidate:missing",
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "expected exactly one current ContributionCandidate" in stderr
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_contribution_candidate_is_regenerated_instead_of_accepting_input_arbitrarily(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+    calls: list[tuple[str, str]] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def discover_contribution_candidates(self) -> list[dict[str, Any]]:
+            calls.append(("discover", ""))
+            return super().discover_contribution_candidates()
+
+        def promote_contribution_candidate(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(("promote", candidate["id"]))
+            return super().promote_contribution_candidate(candidate, **kwargs)
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 0
+    assert calls == [("discover", ""), ("promote", candidate_id)]
+
+
+def test_application_error_does_not_save_store(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+    before = store_path.read_text(encoding="utf-8")
+
+    class FakeWorkflow(CareerWorkflow):
+        def promote_contribution_candidate(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            raise ValueError("application failed")
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_inconsistent_promote_result_fails_before_save_and_preserves_file(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def promote_contribution_candidate(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {
+                "candidate_id": candidate["id"],
+                "decision": "promoted",
+                "contribution": {"id": "contribution:not-in-store", "node_type": "Contribution", "properties": {}},
+                "created": True,
+            }
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_inconsistent_reject_result_fails_before_save_and_preserves_file(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def reject_contribution_candidate(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {"candidate_id": candidate["id"], "decision": "rejected", "reason": "not mine"}
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "reject",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+            "--reason",
+            "not mine",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_persistence_error_does_not_return_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    candidate_id = _candidate_id(store_path)
+    before = store_path.read_text(encoding="utf-8")
+
+    def fail_save(self: JsonGraphStorage, path: Path) -> None:
+        raise OSError("cannot save")
+
+    monkeypatch.setattr(JsonGraphStorage, "save", fail_save)
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "contributions",
+            "promote",
+            "--candidate-id",
+            candidate_id,
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "cannot save" in stderr
     assert store_path.read_text(encoding="utf-8") == before
 
 

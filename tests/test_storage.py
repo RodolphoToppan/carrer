@@ -8,6 +8,7 @@ import copy
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from carrer.storage import JsonGraphStorage
 
@@ -331,6 +332,50 @@ class JsonGraphStorageTest(unittest.TestCase):
         self.assertEqual(storage1.edges, storage2.edges)
         self.assertEqual(storage1.audit_records, storage2.audit_records)
 
+        path.unlink()
+
+    def test_save_preserves_existing_file_when_serialization_fails(self):
+        storage = JsonGraphStorage()
+        storage.nodes["bad"] = {"id": "bad", "node_type": "Bad", "created_at": "2024-01-01T00:00:00Z", "properties": {}}
+        storage.nodes["bad"]["properties"]["value"] = object()
+        path = self.tmp_dir / "test_save_serialization_failure.json"
+        path.write_text('{"original": true}', encoding="utf-8")
+
+        with self.assertRaises(TypeError):
+            storage.save(path)
+
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"original": true}')
+        self.assertEqual(list(self.tmp_dir.glob(f".{path.name}.*.tmp")), [])
+        path.unlink()
+
+    def test_save_preserves_existing_file_when_write_fails_before_replace(self):
+        storage = JsonGraphStorage()
+        path = self.tmp_dir / "test_save_write_failure.json"
+        path.write_text('{"original": true}', encoding="utf-8")
+
+        with (
+            patch("carrer.storage.json_graph_storage.os.fsync", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
+            storage.save(path)
+
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"original": true}')
+        self.assertEqual(list(self.tmp_dir.glob(f".{path.name}.*.tmp")), [])
+        path.unlink()
+
+    def test_save_preserves_existing_file_when_replace_fails(self):
+        storage = JsonGraphStorage()
+        path = self.tmp_dir / "test_save_replace_failure.json"
+        path.write_text('{"original": true}', encoding="utf-8")
+
+        with (
+            patch("carrer.storage.json_graph_storage.os.replace", side_effect=OSError("replace failed")),
+            self.assertRaises(OSError),
+        ):
+            storage.save(path)
+
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"original": true}')
+        self.assertEqual(list(self.tmp_dir.glob(f".{path.name}.*.tmp")), [])
         path.unlink()
 
 
