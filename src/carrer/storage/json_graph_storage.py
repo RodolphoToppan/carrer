@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from carrer.domain.hashing import stable_hash
@@ -64,18 +67,35 @@ class JsonGraphStorage:
         """
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(
-                {
-                    "nodes": self.nodes,
-                    "edges": self.edges,
-                    "audit_records": self.audit_records,
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            encoding="utf-8",
+        content = json.dumps(
+            {
+                "nodes": self.nodes,
+                "edges": self.edges,
+                "audit_records": self.audit_records,
+            },
+            indent=2,
+            sort_keys=True,
         )
+        temp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp:
+                temp_path = temp.name
+                temp.write(content)
+                temp.flush()
+                os.fsync(temp.fileno())
+            os.replace(temp_path, target)
+            temp_path = None
+        finally:
+            if temp_path is not None:
+                with suppress(FileNotFoundError):
+                    Path(temp_path).unlink()
 
     def create_node(self, node: dict) -> tuple[dict, bool]:
         """

@@ -60,6 +60,13 @@ Ou com um export `source_export_v1`:
 ```bash
 python scripts/run_mvp.py examples/azure_devops_export_sample.json
 ```
+## CLI
+Consultas e revisoes explicitas sobre um graph store existente:
+```bash
+carrer --store graph.json contributions discover
+carrer --store graph.json contributions promote --candidate-id <candidate-id> --actor <actor> --decided-at <ISO8601>
+carrer --store graph.json contributions reject --candidate-id <candidate-id> --actor <actor> --decided-at <ISO8601> --reason "..."
+```
 ## Configuracao de conectores
 Conectores atualmente suportados por scripts locais:
 - Azure DevOps
