@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from carrer.application import CareerWorkflow
-from carrer.interfaces.commands import analyses, claims, contributions
+from carrer.interfaces.commands import analyses, artifacts, claims, contributions
 from carrer.storage.json_graph_storage import JsonGraphStorage
 
 COUNTED_NODE_TYPES = (
@@ -34,15 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     contributions.register(commands)
     analyses.register(commands)
     claims.register(commands)
-
-    artifacts = commands.add_parser("artifacts")
-    artifact_commands = artifacts.add_subparsers(dest="artifact_command", required=True)
-    artifact_list = artifact_commands.add_parser("list")
-    artifact_list.add_argument("--claim-ref")
-    artifact_list.add_argument("--artifact-type")
-    artifact_list.add_argument("--audience")
-    artifact_list.add_argument("--status")
-    artifact_list.set_defaults(handler=_artifacts_list)
+    artifacts.register(commands)
 
     exports = commands.add_parser("exports")
     export_commands = exports.add_subparsers(dest="export_command", required=True)
@@ -119,15 +111,6 @@ def _status(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any
     }
 
 
-def _artifacts_list(workflow: CareerWorkflow, args: argparse.Namespace) -> list[dict[str, Any]]:
-    return workflow.list_claim_based_artifacts(
-        claim_ref=args.claim_ref,
-        artifact_type=args.artifact_type,
-        audience=args.audience,
-        status=args.status,
-    )
-
-
 def _exports_list(workflow: CareerWorkflow, args: argparse.Namespace) -> list[dict[str, Any]]:
     return workflow.list_export_receipts(
         source_artifact_id=args.source_artifact_id,
@@ -150,6 +133,8 @@ def _print_result(result: Any, *, json_output: bool, stdout: TextIO) -> None:
     if analyses.print_result(result, stdout):
         return
     if claims.print_result(result, stdout):
+        return
+    if artifacts.print_result(result, stdout):
         return
     if isinstance(result, list):
         _print_list(result, stdout)

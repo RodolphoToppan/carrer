@@ -9,6 +9,10 @@ from typing import Any
 import pytest
 
 from carrer.application import CareerWorkflow
+from carrer.artifacts import (
+    PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
+    PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
+)
 from carrer.claims import (
     CAREER_CLAIM_DERIVED_FROM_ANALYSIS,
     CAREER_CLAIM_FROM_CONTRIBUTION,
@@ -178,6 +182,17 @@ def _claim_ready_store(path: Path) -> tuple[Path, dict[str, Any], list[dict[str,
     return _write_store(path, workflow.store), analysis, candidates
 
 
+def _artifact_ready_store(path: Path) -> tuple[Path, list[dict[str, Any]]]:
+    store_path, _, candidates = _claim_ready_store(path)
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    claims = [
+        workflow.accept_career_claim_candidate(candidate, decision_actor="human", decided_at=NOW)["claim"]
+        for candidate in candidates[:2]
+    ]
+    workflow.store.save(store_path)
+    return store_path, claims
+
+
 def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
     store = tmp_path / "graph.json"
     commands = [
@@ -270,6 +285,58 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "no",
         ],
         ["--store", str(store), "claims", "list"],
+        [
+            "--store",
+            str(store),
+            "artifacts",
+            "build",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+        ],
+        [
+            "--store",
+            str(store),
+            "artifacts",
+            "accept",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        [
+            "--store",
+            str(store),
+            "artifacts",
+            "reject",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "no",
+        ],
         ["--store", str(store), "artifacts", "list"],
         ["--store", str(store), "exports", "list"],
         ["--store", str(store), "integrity", "graph"],
@@ -378,6 +445,63 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "human",
             "--decided-at",
             NOW,
+        ],
+        ["artifacts", "build", "--artifact-type", "resume_claims", "--audience", "internal", "--created-at", NOW],
+        ["artifacts", "build", "--claim-id", "career_claim:1", "--audience", "internal", "--created-at", NOW],
+        ["artifacts", "build", "--claim-id", "career_claim:1", "--artifact-type", "resume_claims", "--created-at", NOW],
+        [
+            "artifacts",
+            "build",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+        ],
+        [
+            "artifacts",
+            "accept",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+            "--decided-at",
+            NEXT,
+        ],
+        [
+            "artifacts",
+            "accept",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+        ],
+        [
+            "artifacts",
+            "reject",
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
         ],
     ],
 )
@@ -1859,6 +1983,543 @@ def test_claims_application_or_save_error_does_not_preserve_success(
             NEXT,
         ]
     )
+
+    assert code == 1
+    assert stdout == ""
+    assert "cannot save" in stderr
+
+
+def test_artifacts_build_delegates_outputs_review_content_and_is_read_only(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    claim_ids = [claim["id"] for claim in claims]
+    before = store_path.read_text(encoding="utf-8")
+    calls: list[list[str]] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def build_claim_based_artifact(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs["claim_ids"])
+            return super().build_claim_based_artifact(**kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "artifacts",
+            "build",
+            "--claim-id",
+            claim_ids[1],
+            "--claim-id",
+            claim_ids[0],
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NEXT,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    output = stdout.getvalue()
+
+    assert code == 0
+    assert calls == [[claim_ids[1], claim_ids[0]]]
+    assert "artifact_id: claim_based_artifact:" in output
+    assert "artifact_type: resume_claims" in output
+    assert "audience: internal" in output
+    assert "status: draft" in output
+    assert "privacy_level:" in output
+    assert "claim_count: 2" in output
+    assert "claim_ids: " in output
+    assert "content:" in output
+    assert claims[0]["properties"]["statement"] in output
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_artifacts_build_json_matches_application_result(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    claim_ids = [claim["id"] for claim in claims]
+    expected = CareerWorkflow(JsonGraphStorage.load(store_path)).build_claim_based_artifact(
+        claim_ids=list(reversed(claim_ids)),
+        artifact_type="resume_claims",
+        audience="internal",
+        created_at=NEXT,
+    )
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "artifacts",
+            "build",
+            "--claim-id",
+            claim_ids[1],
+            "--claim-id",
+            claim_ids[0],
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NEXT,
+        ]
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+
+
+def test_artifacts_build_errors_do_not_save(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+
+    cases = [
+        ["--claim-id", "career_claim:missing"],
+        ["--claim-id", claims[0]["id"], "--claim-id", claims[0]["id"]],
+    ]
+    for extra in cases:
+        code, stdout, _ = _run(
+            [
+                "--store",
+                str(store_path),
+                "artifacts",
+                "build",
+                *extra,
+                "--artifact-type",
+                "resume_claims",
+                "--audience",
+                "internal",
+                "--created-at",
+                NEXT,
+            ]
+        )
+
+        assert code == 1
+        assert stdout == ""
+        assert store_path.read_text(encoding="utf-8") == before
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "artifacts",
+            "build",
+            "--claim-id",
+            claims[0]["id"],
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "public",
+            "--created-at",
+            NEXT,
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "privacy is incompatible" in stderr
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_artifacts_do_not_accept_arbitrary_payload_args(tmp_path: Path) -> None:
+    store = tmp_path / "graph.json"
+
+    for command in ("accept", "reject"):
+        args = [
+            "--store",
+            str(store),
+            "artifacts",
+            command,
+            "--claim-id",
+            "career_claim:1",
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--draft-json",
+            "{}",
+        ]
+        if command == "reject":
+            args.extend(["--reason", "no"])
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(args)
+
+
+def test_artifacts_accept_regenerates_delegates_persists_edges_and_audit(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    claim_ids = [claim["id"] for claim in claims]
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def build_claim_based_artifact(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append("build")
+            return super().build_claim_based_artifact(**kwargs)
+
+        def accept_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(artifact["id"])
+            return super().accept_claim_based_artifact(artifact, **kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "artifacts",
+            "accept",
+            "--claim-id",
+            claim_ids[0],
+            "--claim-id",
+            claim_ids[1],
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+    artifact = reloaded.nodes_by_type("ProfessionalArtifact")[0]
+    props = artifact["properties"]
+
+    assert code == 0
+    assert calls[0] == "build"
+    assert calls[1].startswith("claim_based_artifact:")
+    assert f"artifact_id: {artifact['id']}" in stdout.getvalue()
+    assert props["source_type"] == "career_claim"
+    assert props["status"] == "accepted"
+    assert props["artifact_type"] == "resume_claims"
+    assert props["audience"] == "internal"
+    assert props["claim_refs"] == sorted(claim_ids)
+    assert any(record["audit_type"] == "claim_based_artifact_accepted" for record in reloaded.audit_records)
+    edge_types = {edge["edge_type"] for edge in reloaded.edges if edge["from_node_id"] == artifact["id"]}
+    assert PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM in edge_types
+    assert PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE in edge_types
+
+
+def test_artifacts_accept_is_idempotent_according_to_domain(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    command = [
+        "--store",
+        str(store_path),
+        "--json",
+        "artifacts",
+        "accept",
+        "--claim-id",
+        claims[0]["id"],
+        "--artifact-type",
+        "resume_claims",
+        "--audience",
+        "internal",
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+    ]
+
+    first = _run(command)
+    second = _run(command)
+
+    assert json.loads(first[1])["created"] is True
+    assert json.loads(second[1])["created"] is False
+    reloaded = JsonGraphStorage.load(store_path)
+    assert len(reloaded.nodes_by_type("ProfessionalArtifact")) == 1
+    audits = [record for record in reloaded.audit_records if record["audit_type"] == "claim_based_artifact_accepted"]
+    assert [record["metadata"]["created"] for record in audits] == [True, False]
+
+
+def test_artifacts_accept_inconsistent_result_and_old_audit_fail_before_save(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def accept_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {"decision": "accepted", "source_artifact_id": artifact["id"], "artifact": {"id": "artifact:nope"}}
+
+    args = [
+        "--store",
+        str(store_path),
+        "artifacts",
+        "accept",
+        "--claim-id",
+        claims[0]["id"],
+        "--artifact-type",
+        "resume_claims",
+        "--audience",
+        "internal",
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+    ]
+    code = cli.run(args, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=FakeWorkflow)
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    workflow.accept_claim_based_artifact(
+        workflow.build_claim_based_artifact(
+            claim_ids=[claims[0]["id"]],
+            artifact_type="resume_claims",
+            audience="internal",
+            created_at=NEXT,
+        ),
+        decision_actor="old",
+        decided_at=NOW,
+    )
+    workflow.store.save(store_path)
+    before = store_path.read_text(encoding="utf-8")
+
+    class OldAuditWorkflow(FakeWorkflow):
+        def accept_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            persisted = self.store.nodes_by_type("ProfessionalArtifact")[0]
+            return {
+                "decision": "accepted",
+                "source_artifact_id": artifact["id"],
+                "artifact": persisted,
+                "created": False,
+            }
+
+    code = cli.run(args, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=OldAuditWorkflow)
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_artifacts_reject_regenerates_delegates_audit_only_with_preexisting_artifact(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    workflow.accept_claim_based_artifact(
+        workflow.build_claim_based_artifact(
+            claim_ids=[claims[0]["id"]],
+            artifact_type="resume_claims",
+            audience="internal",
+            created_at=NEXT,
+        ),
+        decision_actor="first",
+        decided_at=NOW,
+    )
+    workflow.store.save(store_path)
+    before = JsonGraphStorage.load(store_path)
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def build_claim_based_artifact(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append("build")
+            return super().build_claim_based_artifact(**kwargs)
+
+        def reject_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(artifact["id"])
+            return super().reject_claim_based_artifact(artifact, **kwargs)
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "artifacts",
+            "reject",
+            "--claim-id",
+            claims[0]["id"],
+            "--artifact-type",
+            "resume_claims",
+            "--audience",
+            "internal",
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "not useful",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+
+    assert code == 0
+    assert calls[0] == "build"
+    assert calls[1].startswith("claim_based_artifact:")
+    assert reloaded.nodes == before.nodes
+    assert reloaded.edges == before.edges
+    assert [record["audit_type"] for record in reloaded.audit_records].count("claim_based_artifact_rejected") == 1
+
+
+def test_artifacts_reject_detects_nested_mutation_and_old_audit_before_save(tmp_path: Path) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def reject_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            claim_ref = artifact["traceability"]["claim_refs"][0]
+            self.store.nodes[claim_ref]["properties"]["metadata"]["unexpected"] = "mutation"
+            self.store.audit_records.append(
+                {
+                    "id": "audit:fake",
+                    "audit_type": "claim_based_artifact_rejected",
+                    "created_at": NEXT,
+                    "actor": "human",
+                    "target_refs": [artifact["id"]],
+                    "result": "rejected",
+                    "metadata": {
+                        "source_artifact_id": artifact["id"],
+                        "artifact_type": artifact["artifact_type"],
+                        "audience": artifact["audience"],
+                        "actor": "human",
+                        "decided_at": NEXT,
+                    },
+                }
+            )
+            return {
+                "source_artifact_id": artifact["id"],
+                "artifact_type": artifact["artifact_type"],
+                "audience": artifact["audience"],
+                "decision": "rejected",
+                "reason": "no",
+            }
+
+    args = [
+        "--store",
+        str(store_path),
+        "artifacts",
+        "reject",
+        "--claim-id",
+        claims[0]["id"],
+        "--artifact-type",
+        "resume_claims",
+        "--audience",
+        "internal",
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+        "--reason",
+        "no",
+    ]
+    code = cli.run(args, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=FakeWorkflow)
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    draft = workflow.build_claim_based_artifact(
+        claim_ids=[claims[0]["id"]],
+        artifact_type="resume_claims",
+        audience="internal",
+        created_at=NEXT,
+    )
+    workflow.reject_claim_based_artifact(draft, decision_actor="old", decided_at=NOW, reason="old")
+    workflow.store.save(store_path)
+    before = store_path.read_text(encoding="utf-8")
+
+    class OldAuditWorkflow(FakeWorkflow):
+        def reject_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {
+                "source_artifact_id": artifact["id"],
+                "artifact_type": artifact["artifact_type"],
+                "audience": artifact["audience"],
+                "decision": "rejected",
+                "reason": "new",
+            }
+
+    code = cli.run(args, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=OldAuditWorkflow)
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_artifacts_application_or_save_error_does_not_preserve_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_path, claims = _artifact_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+
+    class FakeWorkflow(CareerWorkflow):
+        def accept_claim_based_artifact(self, artifact: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            raise ValueError("application failed")
+
+    command = [
+        "--store",
+        str(store_path),
+        "artifacts",
+        "accept",
+        "--claim-id",
+        claims[0]["id"],
+        "--artifact-type",
+        "resume_claims",
+        "--audience",
+        "internal",
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+    ]
+    code = cli.run(command, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=FakeWorkflow)
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+
+    def fail_save(self: JsonGraphStorage, path: Path) -> None:
+        raise OSError("cannot save")
+
+    monkeypatch.setattr(JsonGraphStorage, "save", fail_save)
+    code, stdout, stderr = _run(command)
 
     assert code == 1
     assert stdout == ""
