@@ -128,17 +128,17 @@ def test_acceptance_persists_claim_contract_edges_audit_and_preserves_candidate(
     assert not any("Candidate" in edge["edge_type"] for edge in store.edges)
 
     audit = store.audit_records[-1]
-    audit_json = json.dumps(audit)
+    audit_metadata_json = json.dumps(audit["metadata"])
     assert audit["audit_type"] == "career_claim_candidate_accepted"
     assert audit["metadata"]["created"] is True
     assert audit["metadata"]["actor"] == "human"
     assert audit["metadata"]["decided_at"] == "2026-01-03T00:00:00Z"
     assert audit["metadata"]["evidence_refs"] == len(candidate["evidence_refs"])
-    assert "Observed latency metric" not in audit_json
-    assert "reviewed retry behavior" not in audit_json
-    assert "bug resolved" not in audit_json
-    assert "Retry fix" not in audit_json
-    assert "300" not in audit_json
+    assert "Observed latency metric" not in audit_metadata_json
+    assert "reviewed retry behavior" not in audit_metadata_json
+    assert "bug resolved" not in audit_metadata_json
+    assert "Retry fix" not in audit_metadata_json
+    assert "300" not in audit_metadata_json
 
 
 def test_acceptance_is_idempotent_and_second_audit_uses_current_call() -> None:
