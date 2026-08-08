@@ -66,7 +66,11 @@ Consultas e revisoes explicitas sobre um graph store existente:
 carrer --store graph.json contributions discover
 carrer --store graph.json contributions promote --candidate-id <candidate-id> --actor <actor> --decided-at <ISO8601>
 carrer --store graph.json contributions reject --candidate-id <candidate-id> --actor <actor> --decided-at <ISO8601> --reason "..."
+carrer --store graph.json analyses generate --contribution-id <contribution-id>
+carrer --store graph.json analyses accept --contribution-id <contribution-id> --actor <actor> --decided-at <ISO8601>
+carrer --store graph.json analyses reject --contribution-id <contribution-id> --actor <actor> --decided-at <ISO8601> --reason "..."
 ```
+`analyses generate` e read-only: carrega o store, regenera a `ContributionAnalysis` deterministica atual em memoria e nao salva. `analyses accept` e `analyses reject` sao decisoes humanas explicitas: a CLI regenera a analise atual no mesmo processo, delega a revisao para a application layer, valida a pos-condicao em memoria e so entao salva via substituicao atomica do JSON graph.
 ## Configuracao de conectores
 Conectores atualmente suportados por scripts locais:
 - Azure DevOps

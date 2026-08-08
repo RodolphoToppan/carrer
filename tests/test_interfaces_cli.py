@@ -107,6 +107,17 @@ def _candidate_id(store_path: Path) -> str:
     return CareerWorkflow(JsonGraphStorage.load(store_path)).discover_contribution_candidates()[0]["id"]
 
 
+def _promoted_store(path: Path) -> tuple[Path, dict[str, Any]]:
+    workflow = CareerWorkflow(_basic_store())
+    contribution = workflow.promote_contribution_candidate(
+        workflow.discover_contribution_candidates()[0],
+        created_at=NOW,
+        decision_actor="human",
+        status="draft",
+    )["contribution"]
+    return _write_store(path, workflow.store), contribution
+
+
 def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
     store = tmp_path / "graph.json"
     commands = [
@@ -139,6 +150,33 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "--reason",
             "no",
         ],
+        ["--store", str(store), "analyses", "generate", "--contribution-id", "contribution:1"],
+        [
+            "--store",
+            str(store),
+            "analyses",
+            "accept",
+            "--contribution-id",
+            "contribution:1",
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        [
+            "--store",
+            str(store),
+            "analyses",
+            "reject",
+            "--contribution-id",
+            "contribution:1",
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+            "--reason",
+            "no",
+        ],
         ["--store", str(store), "analyses", "list"],
         ["--store", str(store), "claims", "list"],
         ["--store", str(store), "artifacts", "list"],
@@ -159,6 +197,14 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
         ["contributions", "reject", "--actor", "human", "--decided-at", NOW, "--reason", "no"],
         ["contributions", "reject", "--candidate-id", "c:1", "--decided-at", NOW, "--reason", "no"],
         ["contributions", "reject", "--candidate-id", "c:1", "--actor", "human", "--reason", "no"],
+        ["analyses", "generate"],
+        ["analyses", "accept", "--actor", "human", "--decided-at", NOW],
+        ["analyses", "accept", "--contribution-id", "contribution:1", "--decided-at", NOW],
+        ["analyses", "accept", "--contribution-id", "contribution:1", "--actor", "human"],
+        ["analyses", "reject", "--actor", "human", "--decided-at", NOW, "--reason", "no"],
+        ["analyses", "reject", "--contribution-id", "contribution:1", "--decided-at", NOW, "--reason", "no"],
+        ["analyses", "reject", "--contribution-id", "contribution:1", "--actor", "human", "--reason", "no"],
+        ["analyses", "reject", "--contribution-id", "contribution:1", "--actor", "human", "--decided-at", NOW],
     ],
 )
 def test_contribution_decision_required_parser_arguments(tmp_path: Path, command: list[str]) -> None:
@@ -575,6 +621,482 @@ def test_persistence_error_does_not_return_success(tmp_path: Path, monkeypatch: 
     assert store_path.read_text(encoding="utf-8") == before
 
 
+def test_analyses_generate_delegates_outputs_review_summary_and_is_read_only(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def analyze_contribution(self, contribution_id: str) -> dict[str, Any]:
+            calls.append(contribution_id)
+            return super().analyze_contribution(contribution_id)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        ["--store", str(store_path), "analyses", "generate", "--contribution-id", contribution["id"]],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 0
+    assert calls == [contribution["id"]]
+    assert "analysis_id:" in stdout.getvalue()
+    assert "contribution_ref:" in stdout.getvalue()
+    assert "impact_signals:" in stdout.getvalue()
+    assert "title" not in stdout.getvalue()
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_analyses_generate_json_matches_application_result(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    expected = CareerWorkflow(JsonGraphStorage.load(store_path)).analyze_contribution(contribution["id"])
+
+    code, stdout, stderr = _run(
+        ["--store", str(store_path), "--json", "analyses", "generate", "--contribution-id", contribution["id"]]
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+
+
+def test_analyses_generate_missing_contribution_returns_controlled_error(tmp_path: Path) -> None:
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    before = store_path.read_text(encoding="utf-8")
+
+    code, stdout, stderr = _run(
+        ["--store", str(store_path), "analyses", "generate", "--contribution-id", "contribution:missing"]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "Contribution not found" in stderr
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_analyses_accept_regenerates_delegates_persists_edges_and_audit(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    calls: list[tuple[str, str]] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def analyze_contribution(self, contribution_id: str) -> dict[str, Any]:
+            calls.append(("analyze", contribution_id))
+            return super().analyze_contribution(contribution_id)
+
+        def accept_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(("accept", analysis["contribution_ref"]))
+            return super().accept_contribution_analysis(analysis, **kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "accept",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+    analysis = reloaded.nodes_by_type("ContributionAnalysis")[0]
+
+    assert code == 0
+    assert calls == [("analyze", contribution["id"]), ("accept", contribution["id"])]
+    assert f"analysis_id: {analysis['id']}" in stdout.getvalue()
+    assert analysis["properties"]["status"] == "accepted"
+    assert any(record["audit_type"] == "contribution_analysis_accepted" for record in reloaded.audit_records)
+    edge_types = {edge["edge_type"] for edge in reloaded.edges if edge["from_node_id"] == analysis["id"]}
+    assert "CONTRIBUTION_ANALYSIS_OF_CONTRIBUTION" in edge_types
+    assert "CONTRIBUTION_ANALYSIS_SUPPORTED_BY_EVIDENCE" in edge_types
+
+
+def test_analyses_accept_reject_do_not_accept_arbitrary_payload_args(tmp_path: Path) -> None:
+    store = tmp_path / "graph.json"
+
+    for command in ("accept", "reject"):
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(
+                [
+                    "--store",
+                    str(store),
+                    "analyses",
+                    command,
+                    "--contribution-id",
+                    "contribution:1",
+                    "--actor",
+                    "human",
+                    "--decided-at",
+                    NOW,
+                    "--analysis-json",
+                    "{}",
+                ]
+            )
+
+
+def test_analyses_accept_inconsistent_result_fails_before_save(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def accept_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {"decision": "accepted", "analysis": {"id": "contribution_analysis:missing"}, "created": True}
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "accept",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_analyses_accept_requires_audit_from_current_decision(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    workflow.accept_contribution_analysis(
+        workflow.analyze_contribution(contribution["id"]),
+        decision_actor="human",
+        decided_at=NOW,
+    )
+    workflow.store.save(store_path)
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def accept_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {"decision": "accepted", "analysis": self.store.nodes[analysis["id"]], "created": False}
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "accept",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_analyses_reject_regenerates_delegates_persists_only_audit_with_preexisting_analysis(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    workflow.accept_contribution_analysis(
+        workflow.analyze_contribution(contribution["id"]),
+        decision_actor="first",
+        decided_at=NOW,
+    )
+    workflow.store.save(store_path)
+    before = JsonGraphStorage.load(store_path)
+    calls: list[tuple[str, str]] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def analyze_contribution(self, contribution_id: str) -> dict[str, Any]:
+            calls.append(("analyze", contribution_id))
+            return super().analyze_contribution(contribution_id)
+
+        def reject_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(("reject", analysis["contribution_ref"]))
+            return super().reject_contribution_analysis(analysis, **kwargs)
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "reject",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "not enough context",
+        ]
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+
+    assert code == 0
+    assert stderr == ""
+    assert "decision: rejected" in stdout
+    assert reloaded.nodes == before.nodes
+    assert reloaded.edges == before.edges
+    assert [record["audit_type"] for record in reloaded.audit_records].count("contribution_analysis_rejected") == 1
+    assert calls == []
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "reject",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "not enough context",
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    assert code == 0
+    assert calls == [("analyze", contribution["id"]), ("reject", contribution["id"])]
+
+
+def test_analyses_reject_inconsistent_result_fails_before_save(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def reject_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {"decision": "rejected", "analysis_id": analysis["id"], "contribution_ref": "wrong", "reason": ""}
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "reject",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+            "--reason",
+            "no",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_analyses_reject_detects_nested_graph_mutation_before_save(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def reject_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            self.store.nodes[analysis["contribution_ref"]]["properties"]["metadata"]["unexpected"] = "mutation"
+            self.store.append_audit_record(
+                "contribution_analysis_rejected",
+                [analysis["id"], analysis["contribution_ref"]],
+                "rejected",
+                {
+                    "analysis_id": analysis["id"],
+                    "contribution_id": analysis["contribution_ref"],
+                    "actor": "human",
+                    "decided_at": NOW,
+                    "reason": "no",
+                },
+            )
+            return {
+                "decision": "rejected",
+                "analysis_id": analysis["id"],
+                "contribution_ref": analysis["contribution_ref"],
+                "reason": "no",
+            }
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "reject",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+            "--reason",
+            "no",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_analyses_application_or_save_error_does_not_preserve_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+
+    class FakeWorkflow(CareerWorkflow):
+        def accept_contribution_analysis(self, analysis: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            raise ValueError("application failed")
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "accept",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+
+    def fail_save(self: JsonGraphStorage, path: Path) -> None:
+        raise OSError("cannot save")
+
+    monkeypatch.setattr(JsonGraphStorage, "save", fail_save)
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "analyses",
+            "accept",
+            "--contribution-id",
+            contribution["id"],
+            "--actor",
+            "human",
+            "--decided-at",
+            NOW,
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "cannot save" in stderr
+
+
+def test_analyses_accept_is_idempotent_according_to_domain(tmp_path: Path) -> None:
+    store_path, contribution = _promoted_store(tmp_path / "graph.json")
+    command = [
+        "--store",
+        str(store_path),
+        "--json",
+        "analyses",
+        "accept",
+        "--contribution-id",
+        contribution["id"],
+        "--actor",
+        "human",
+        "--decided-at",
+        NOW,
+    ]
+
+    first = _run(command)
+    second = _run(command)
+
+    assert json.loads(first[1])["created"] is True
+    assert json.loads(second[1])["created"] is False
+    assert len(JsonGraphStorage.load(store_path).nodes_by_type("ContributionAnalysis")) == 1
+
+
 def test_list_commands_return_only_matching_contracts(tmp_path: Path) -> None:
     store_path = _write_store(tmp_path / "graph.json", _accepted_store(tmp_path / "exports"))
 
@@ -652,12 +1174,14 @@ def test_application_error_is_not_converted_to_success(tmp_path: Path) -> None:
 
 
 def test_read_only_commands_never_save_or_alter_store_file(tmp_path: Path) -> None:
-    store_path = _write_store(tmp_path / "graph.json", _accepted_store(tmp_path / "exports"))
+    store = _accepted_store(tmp_path / "exports")
+    store_path = _write_store(tmp_path / "graph.json", store)
     before = store_path.read_text(encoding="utf-8")
     commands = [
         ["status"],
         ["contributions", "list"],
         ["contributions", "discover"],
+        ["analyses", "generate", "--contribution-id", store.nodes_by_type("Contribution")[0]["id"]],
         ["analyses", "list"],
         ["claims", "list"],
         ["artifacts", "list"],
