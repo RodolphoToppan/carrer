@@ -45,6 +45,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     export_list.add_argument("--export-format")
     export_list.set_defaults(handler=_exports_list)
 
+    export_integrity = export_commands.add_parser("integrity")
+    export_integrity.add_argument("--receipt-id", required=True)
+    export_integrity.add_argument("--output-directory", required=True)
+    export_integrity.add_argument("--checked-at", required=True)
+    export_integrity.set_defaults(handler=_exports_integrity)
+
 
 def print_result(result: Any, stdout: TextIO) -> bool:
     if isinstance(result, dict) and result.get("candidate_type") == "claim_based_artifact_export":
@@ -55,6 +61,9 @@ def print_result(result: Any, stdout: TextIO) -> bool:
         return True
     if isinstance(result, dict) and result.get("decision") == "rejected" and "candidate_id" in result:
         _print_rejected_export(result, stdout)
+        return True
+    if isinstance(result, dict) and result.get("report_type") == "artifact_export_integrity":
+        _print_export_integrity(result, stdout)
         return True
     return False
 
@@ -115,6 +124,14 @@ def _exports_list(workflow: CareerWorkflow, args: argparse.Namespace) -> list[di
         source_artifact_id=args.source_artifact_id,
         export_scope=args.export_scope,
         export_format=args.export_format,
+    )
+
+
+def _exports_integrity(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
+    return workflow.check_export_integrity(
+        args.receipt_id,
+        output_directory=args.output_directory,
+        checked_at=args.checked_at,
     )
 
 
@@ -292,3 +309,25 @@ def _print_rejected_export(result: dict[str, Any], stdout: TextIO) -> None:
     print(f"candidate_id: {result['candidate_id']}", file=stdout)
     print(f"source_artifact_id: {result['source_artifact_id']}", file=stdout)
     print(f"reason: {result['reason']}", file=stdout)
+
+
+def _print_export_integrity(report: dict[str, Any], stdout: TextIO) -> None:
+    issues = report["issues"]
+    repairable_count = sum(issue["repairable"] for issue in issues)
+    print(f"report_id: {report['id']}", file=stdout)
+    print(f"status: {report['status']}", file=stdout)
+    print(f"receipt_id: {report['receipt_id']}", file=stdout)
+    print(f"source_artifact_id: {report['source_artifact_id']}", file=stdout)
+    print(f"file_name: {report['expected_file_name']}", file=stdout)
+    print(f"issue_count: {len(issues)}", file=stdout)
+    print(f"repairable_count: {repairable_count}", file=stdout)
+    for issue in issues:
+        print(f"- {issue['severity']} {issue['code']}{_safe_issue_subject(issue)}", file=stdout)
+
+
+def _safe_issue_subject(issue: dict[str, Any]) -> str:
+    details = issue.get("details")
+    file_name = details.get("file_name") if isinstance(details, dict) else None
+    if isinstance(file_name, str) and file_name and "/" not in file_name and "\\" not in file_name:
+        return f" {file_name}"
+    return ""
