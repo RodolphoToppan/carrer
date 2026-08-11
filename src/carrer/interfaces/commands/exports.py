@@ -51,6 +51,15 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     export_integrity.add_argument("--checked-at", required=True)
     export_integrity.set_defaults(handler=_exports_integrity)
 
+    repair = export_commands.add_parser("repair")
+    repair_commands = repair.add_subparsers(dest="repair_command", required=True)
+    repair_build = repair_commands.add_parser("build")
+    repair_build.add_argument("--receipt-id", required=True)
+    repair_build.add_argument("--output-directory", required=True)
+    repair_build.add_argument("--checked-at", required=True)
+    repair_build.add_argument("--created-at", required=True)
+    repair_build.set_defaults(handler=_exports_repair_build)
+
 
 def print_result(result: Any, stdout: TextIO) -> bool:
     if isinstance(result, dict) and result.get("candidate_type") == "claim_based_artifact_export":
@@ -64,6 +73,9 @@ def print_result(result: Any, stdout: TextIO) -> bool:
         return True
     if isinstance(result, dict) and result.get("report_type") == "artifact_export_integrity":
         _print_export_integrity(result, stdout)
+        return True
+    if isinstance(result, dict) and result.get("candidate_type") == "artifact_export_repair":
+        _print_export_repair_candidate(result, stdout)
         return True
     return False
 
@@ -133,6 +145,15 @@ def _exports_integrity(workflow: CareerWorkflow, args: argparse.Namespace) -> di
         output_directory=args.output_directory,
         checked_at=args.checked_at,
     )
+
+
+def _exports_repair_build(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
+    report = workflow.check_export_integrity(
+        args.receipt_id,
+        output_directory=args.output_directory,
+        checked_at=args.checked_at,
+    )
+    return workflow.build_repair_candidate(report, created_at=args.created_at)
 
 
 def _current_export_candidate(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
@@ -323,6 +344,20 @@ def _print_export_integrity(report: dict[str, Any], stdout: TextIO) -> None:
     print(f"repairable_count: {repairable_count}", file=stdout)
     for issue in issues:
         print(f"- {issue['severity']} {issue['code']}{_safe_issue_subject(issue)}", file=stdout)
+
+
+def _print_export_repair_candidate(candidate: dict[str, Any], stdout: TextIO) -> None:
+    print(f"candidate_id: {candidate['id']}", file=stdout)
+    print(f"report_id: {candidate['report_id']}", file=stdout)
+    print(f"receipt_id: {candidate['receipt_id']}", file=stdout)
+    print(f"candidate_type: {candidate['candidate_type']}", file=stdout)
+    print(f"issue_count: {len(candidate['issue_codes'])}", file=stdout)
+    print(f"repair_action_count: {len(candidate['repair_actions'])}", file=stdout)
+    print(f"created_at: {candidate['created_at']}", file=stdout)
+    for code in candidate["issue_codes"]:
+        print(f"- issue: {code}", file=stdout)
+    for action in candidate["repair_actions"]:
+        print(f"- repair_action: {action}", file=stdout)
 
 
 def _safe_issue_subject(issue: dict[str, Any]) -> str:
