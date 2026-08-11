@@ -10,6 +10,9 @@ import pytest
 
 from carrer.application import CareerWorkflow
 from carrer.artifacts import (
+    ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT,
+    ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
+    ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
     PROFESSIONAL_ARTIFACT_DERIVED_FROM_CLAIM,
     PROFESSIONAL_ARTIFACT_SUPPORTED_BY_EVIDENCE,
 )
@@ -193,6 +196,37 @@ def _artifact_ready_store(path: Path) -> tuple[Path, list[dict[str, Any]]]:
     return store_path, claims
 
 
+def _export_ready_store(path: Path) -> tuple[Path, dict[str, Any]]:
+    workflow = CareerWorkflow(_basic_store())
+    contribution = workflow.promote_contribution_candidate(
+        workflow.discover_contribution_candidates()[0],
+        created_at=NOW,
+        decision_actor="human",
+        status="draft",
+    )["contribution"]
+    analysis = workflow.accept_contribution_analysis(
+        workflow.analyze_contribution(contribution["id"]),
+        decision_actor="human",
+        decided_at=NOW,
+    )["analysis"]
+    claim = workflow.accept_career_claim_candidate(
+        workflow.generate_career_claim_candidates(analysis["id"])[0],
+        decision_actor="human",
+        decided_at=NOW,
+    )["claim"]
+    artifact = workflow.accept_claim_based_artifact(
+        workflow.build_claim_based_artifact(
+            claim_ids=[claim["id"]],
+            artifact_type="resume_claims",
+            audience="public",
+            created_at=NOW,
+        ),
+        decision_actor="human",
+        decided_at=NOW,
+    )["artifact"]
+    return _write_store(path, workflow.store), artifact
+
+
 def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
     store = tmp_path / "graph.json"
     commands = [
@@ -338,6 +372,60 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "no",
         ],
         ["--store", str(store), "artifacts", "list"],
+        [
+            "--store",
+            str(store),
+            "exports",
+            "build",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+        ],
+        [
+            "--store",
+            str(store),
+            "exports",
+            "accept",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+            "--output-directory",
+            str(tmp_path / "exports"),
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        [
+            "--store",
+            str(store),
+            "exports",
+            "reject",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "no",
+        ],
         ["--store", str(store), "exports", "list"],
         ["--store", str(store), "integrity", "graph"],
     ]
@@ -496,6 +584,83 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "resume_claims",
             "--audience",
             "internal",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        ["exports", "build", "--export-scope", "external", "--export-format", "markdown", "--created-at", NOW],
+        ["exports", "build", "--artifact-id", "artifact:1", "--export-format", "markdown", "--created-at", NOW],
+        ["exports", "build", "--artifact-id", "artifact:1", "--export-scope", "external", "--created-at", NOW],
+        [
+            "exports",
+            "build",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+        ],
+        [
+            "exports",
+            "accept",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        [
+            "exports",
+            "accept",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+            "--output-directory",
+            "out",
+            "--decided-at",
+            NEXT,
+        ],
+        [
+            "exports",
+            "accept",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+            "--output-directory",
+            "out",
+            "--actor",
+            "human",
+        ],
+        [
+            "exports",
+            "reject",
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
             "--created-at",
             NOW,
             "--actor",
@@ -2524,6 +2689,725 @@ def test_artifacts_application_or_save_error_does_not_preserve_success(
     assert code == 1
     assert stdout == ""
     assert "cannot save" in stderr
+
+
+def test_exports_build_delegates_outputs_review_summary_and_is_read_only(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    output_dir = tmp_path / "exports"
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def build_export_candidate(self, artifact_id: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append(artifact_id)
+            return super().build_export_candidate(artifact_id, **kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "build",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    output = stdout.getvalue()
+
+    assert code == 0
+    assert calls == [artifact["id"]]
+    assert "candidate_id: claim_based_artifact_export_candidate:" in output
+    assert f"source_artifact_id: {artifact['id']}" in output
+    assert "export_scope: external" in output
+    assert "export_format: markdown" in output
+    assert "file_name: resume_claims-" in output
+    assert "content_hash:" in output
+    assert "claim_count: 1" in output
+    assert "evidence_count:" in output
+    assert "content:" not in output
+    assert store_path.read_text(encoding="utf-8") == before
+    assert not output_dir.exists()
+
+
+def test_exports_build_json_matches_application_result(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    expected = CareerWorkflow(JsonGraphStorage.load(store_path)).build_export_candidate(
+        artifact["id"],
+        export_scope="external",
+        export_format="markdown",
+        created_at=NEXT,
+    )
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "build",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+        ]
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+
+
+def test_exports_build_errors_do_not_save_or_write_files(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    output_dir = tmp_path / "exports"
+
+    for extra in (
+        ["--artifact-id", "artifact:missing", "--export-scope", "external", "--export-format", "markdown"],
+        ["--artifact-id", artifact["id"], "--export-scope", "external", "--export-format", "pdf"],
+    ):
+        code, stdout, _ = _run(["--store", str(store_path), "exports", "build", *extra, "--created-at", NEXT])
+
+        assert code == 1
+        assert stdout == ""
+        assert store_path.read_text(encoding="utf-8") == before
+        assert not output_dir.exists()
+
+
+def test_exports_do_not_accept_arbitrary_payload_args(tmp_path: Path) -> None:
+    store = tmp_path / "graph.json"
+
+    for command in ("accept", "reject"):
+        args = [
+            "--store",
+            str(store),
+            "exports",
+            command,
+            "--artifact-id",
+            "artifact:1",
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NOW,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--candidate-json",
+            "{}",
+        ]
+        if command == "accept":
+            args.extend(["--output-directory", "out"])
+        else:
+            args.extend(["--reason", "no"])
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(args)
+
+
+def test_exports_accept_regenerates_delegates_persists_receipt_edges_audit_and_file(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def build_export_candidate(self, artifact_id: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append("build:" + artifact_id)
+            return super().build_export_candidate(artifact_id, **kwargs)
+
+        def accept_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(candidate["id"])
+            return super().accept_export(candidate, **kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "accept",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--output-directory",
+            str(output_dir),
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+    receipt = reloaded.nodes_by_type("ArtifactExportReceipt")[0]
+    props = receipt["properties"]
+
+    assert code == 0
+    assert calls[0] == "build:" + artifact["id"]
+    assert calls[1].startswith("claim_based_artifact_export_candidate:")
+    assert f"receipt_id: {receipt['id']}" in stdout.getvalue()
+    assert props["source_artifact_id"] == artifact["id"]
+    assert props["export_scope"] == "external"
+    assert props["export_format"] == "markdown"
+    assert (output_dir / props["file_name"]).read_text(encoding="utf-8")
+    assert any(record["audit_type"] == "claim_based_artifact_export_accepted" for record in reloaded.audit_records)
+    edge_types = {edge["edge_type"] for edge in reloaded.edges if edge["from_node_id"] == receipt["id"]}
+    assert ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT in edge_types
+    assert ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM in edge_types
+    assert ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE in edge_types
+
+
+def test_exports_accept_is_idempotent_according_to_domain(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    command = [
+        "--store",
+        str(store_path),
+        "--json",
+        "exports",
+        "accept",
+        "--artifact-id",
+        artifact["id"],
+        "--export-scope",
+        "external",
+        "--export-format",
+        "markdown",
+        "--created-at",
+        NEXT,
+        "--output-directory",
+        str(output_dir),
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+    ]
+
+    first = _run(command)
+    second = _run(command)
+
+    assert json.loads(first[1])["created"] is True
+    assert json.loads(first[1])["written"] is True
+    assert json.loads(second[1])["created"] is False
+    assert json.loads(second[1])["written"] is False
+    reloaded = JsonGraphStorage.load(store_path)
+    assert len(reloaded.nodes_by_type("ArtifactExportReceipt")) == 1
+    audits = [
+        record for record in reloaded.audit_records if record["audit_type"] == "claim_based_artifact_export_accepted"
+    ]
+    assert [record["metadata"]["created"] for record in audits] == [True, False]
+    assert [record["metadata"]["written"] for record in audits] == [True, False]
+
+
+def test_exports_accept_preexisting_file_policy_matches_domain(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    candidate = CareerWorkflow(JsonGraphStorage.load(store_path)).build_export_candidate(
+        artifact["id"],
+        export_scope="external",
+        export_format="markdown",
+        created_at=NEXT,
+    )
+    output_dir.mkdir()
+    (output_dir / candidate["file_name"]).write_text(candidate["content"], encoding="utf-8")
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "accept",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--output-directory",
+            str(output_dir),
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "already exists" in stderr
+    assert JsonGraphStorage.load(store_path).nodes_by_type("ArtifactExportReceipt") == []
+    (output_dir / candidate["file_name"]).write_text("changed", encoding="utf-8")
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "accept",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--output-directory",
+            str(output_dir),
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "already exists" in stderr
+    assert JsonGraphStorage.load(store_path).nodes_by_type("ArtifactExportReceipt") == []
+
+
+def test_exports_reject_regenerates_delegates_audit_only_with_preexisting_receipt_and_file(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    workflow.accept_export(
+        workflow.build_export_candidate(
+            artifact["id"],
+            export_scope="external",
+            export_format="markdown",
+            created_at=NEXT,
+        ),
+        output_directory=output_dir,
+        decision_actor="first",
+        decided_at=NOW,
+    )
+    workflow.store.save(store_path)
+    before = JsonGraphStorage.load(store_path)
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def build_export_candidate(self, artifact_id: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append("build")
+            return super().build_export_candidate(artifact_id, **kwargs)
+
+        def reject_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append(candidate["id"])
+            return super().reject_export(candidate, **kwargs)
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "reject",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "not this export",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    reloaded = JsonGraphStorage.load(store_path)
+
+    assert code == 0
+    assert calls[0] == "build"
+    assert calls[1].startswith("claim_based_artifact_export_candidate:")
+    assert reloaded.nodes == before.nodes
+    assert reloaded.edges == before.edges
+    assert [record["audit_type"] for record in reloaded.audit_records].count(
+        "claim_based_artifact_export_rejected"
+    ) == 1
+
+
+def test_exports_reject_detects_nested_mutation_and_old_audit_before_save(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def reject_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            self.store.nodes[candidate["source_artifact_id"]]["properties"]["metadata"]["unexpected"] = "mutation"
+            self.store.audit_records.append(
+                {
+                    "id": "audit:fake",
+                    "audit_type": "claim_based_artifact_export_rejected",
+                    "created_at": NEXT,
+                    "actor": "human",
+                    "target_refs": [candidate["id"]],
+                    "result": "rejected",
+                    "metadata": {
+                        "candidate_id": candidate["id"],
+                        "source_artifact_id": candidate["source_artifact_id"],
+                        "export_scope": candidate["export_scope"],
+                        "export_format": candidate["export_format"],
+                        "actor": "human",
+                        "decided_at": NEXT,
+                    },
+                }
+            )
+            return {
+                "candidate_id": candidate["id"],
+                "source_artifact_id": candidate["source_artifact_id"],
+                "decision": "rejected",
+                "reason": "no",
+            }
+
+    args = [
+        "--store",
+        str(store_path),
+        "exports",
+        "reject",
+        "--artifact-id",
+        artifact["id"],
+        "--export-scope",
+        "external",
+        "--export-format",
+        "markdown",
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+        "--reason",
+        "no",
+    ]
+    code = cli.run(args, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=FakeWorkflow)
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    workflow.reject_export(
+        workflow.build_export_candidate(
+            artifact["id"],
+            export_scope="external",
+            export_format="markdown",
+            created_at=NEXT,
+        ),
+        decision_actor="old",
+        decided_at=NOW,
+        reason="old",
+    )
+    workflow.store.save(store_path)
+    before = store_path.read_text(encoding="utf-8")
+
+    class OldAuditWorkflow(FakeWorkflow):
+        def reject_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            return {
+                "candidate_id": candidate["id"],
+                "source_artifact_id": candidate["source_artifact_id"],
+                "decision": "rejected",
+                "reason": "new",
+            }
+
+    code = cli.run(args, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=OldAuditWorkflow)
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_exports_accept_missing_created_result_fails_before_save_and_preserves_graph_boundary(tmp_path: Path) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+    candidate = CareerWorkflow(JsonGraphStorage.load(store_path)).build_export_candidate(
+        artifact["id"],
+        export_scope="external",
+        export_format="markdown",
+        created_at=NEXT,
+    )
+    final_file = output_dir / candidate["file_name"]
+    temp_file = output_dir / ("." + candidate["file_name"] + ".tmp")
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def accept_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            result = super().accept_export(candidate, **kwargs)
+            result.pop("created")
+            return result
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "accept",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--output-directory",
+            str(output_dir),
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+    assert final_file.exists()
+    assert not temp_file.exists()
+
+
+@pytest.mark.parametrize("field", ["created", "written"])
+def test_exports_accept_created_written_result_must_match_current_audit_before_save(tmp_path: Path, field: str) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+    candidate = CareerWorkflow(JsonGraphStorage.load(store_path)).build_export_candidate(
+        artifact["id"],
+        export_scope="external",
+        export_format="markdown",
+        created_at=NEXT,
+    )
+    final_file = output_dir / candidate["file_name"]
+    temp_file = output_dir / ("." + candidate["file_name"] + ".tmp")
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def accept_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            result = super().accept_export(candidate, **kwargs)
+            result[field] = False
+            return result
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "accept",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--output-directory",
+            str(output_dir),
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+    assert final_file.exists()
+    assert not temp_file.exists()
+
+
+@pytest.mark.parametrize("mutation", ["missing", "changed"])
+def test_exports_reject_malformed_reason_result_fails_before_save(tmp_path: Path, mutation: str) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    before = store_path.read_text(encoding="utf-8")
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, store: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = store.nodes
+            self.store.edges = store.edges
+            self.store.audit_records = store.audit_records
+
+        def reject_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            result = super().reject_export(candidate, **kwargs)
+            if mutation == "missing":
+                result.pop("reason")
+            else:
+                result["reason"] = "changed"
+            return result
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "reject",
+            "--artifact-id",
+            artifact["id"],
+            "--export-scope",
+            "external",
+            "--export-format",
+            "markdown",
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "no",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_text(encoding="utf-8") == before
+
+
+def test_exports_application_filesystem_and_save_errors_preserve_real_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_path, artifact = _export_ready_store(tmp_path / "graph.json")
+    output_dir = tmp_path / "exports"
+    before = store_path.read_text(encoding="utf-8")
+
+    class FailingWorkflow(CareerWorkflow):
+        def accept_export(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            raise ValueError("application failed")
+
+    command = [
+        "--store",
+        str(store_path),
+        "exports",
+        "accept",
+        "--artifact-id",
+        artifact["id"],
+        "--export-scope",
+        "external",
+        "--export-format",
+        "markdown",
+        "--created-at",
+        NEXT,
+        "--output-directory",
+        str(output_dir),
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+    ]
+    code = cli.run(command, stdout=io.StringIO(), stderr=io.StringIO(), workflow_factory=FailingWorkflow)
+
+    assert code == 1
+    assert store_path.read_text(encoding="utf-8") == before
+    assert not output_dir.exists()
+
+    output_dir.mkdir()
+    code, stdout, stderr = _run(command)
+
+    assert code == 0
+    assert stdout
+    receipt = JsonGraphStorage.load(store_path).nodes_by_type("ArtifactExportReceipt")[0]
+    final_file = output_dir / receipt["properties"]["file_name"]
+    final_content = final_file.read_text(encoding="utf-8")
+    store_path.write_text(before, encoding="utf-8")
+    final_file.unlink()
+    output_dir.rmdir()
+
+    def fail_save(self: JsonGraphStorage, path: Path) -> None:
+        raise OSError("cannot save graph")
+
+    monkeypatch.setattr(JsonGraphStorage, "save", fail_save)
+    code, stdout, stderr = _run(command)
+    temp_file = output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+
+    assert code == 1
+    assert stdout == ""
+    assert "cannot save graph" in stderr
+    assert final_file.exists()
+    assert final_file.read_text(encoding="utf-8") == final_content
+    assert store_path.read_text(encoding="utf-8") == before
+    assert not temp_file.exists()
 
 
 def test_list_commands_return_only_matching_contracts(tmp_path: Path) -> None:

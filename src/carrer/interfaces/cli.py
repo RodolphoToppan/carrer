@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from carrer.application import CareerWorkflow
-from carrer.interfaces.commands import analyses, artifacts, claims, contributions
+from carrer.interfaces.commands import analyses, artifacts, claims, contributions, exports
 from carrer.storage.json_graph_storage import JsonGraphStorage
 
 COUNTED_NODE_TYPES = (
@@ -35,14 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyses.register(commands)
     claims.register(commands)
     artifacts.register(commands)
-
-    exports = commands.add_parser("exports")
-    export_commands = exports.add_subparsers(dest="export_command", required=True)
-    export_list = export_commands.add_parser("list")
-    export_list.add_argument("--source-artifact-id")
-    export_list.add_argument("--export-scope")
-    export_list.add_argument("--export-format")
-    export_list.set_defaults(handler=_exports_list)
+    exports.register(commands)
 
     integrity = commands.add_parser("integrity")
     integrity_commands = integrity.add_subparsers(dest="integrity_command", required=True)
@@ -111,14 +104,6 @@ def _status(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any
     }
 
 
-def _exports_list(workflow: CareerWorkflow, args: argparse.Namespace) -> list[dict[str, Any]]:
-    return workflow.list_export_receipts(
-        source_artifact_id=args.source_artifact_id,
-        export_scope=args.export_scope,
-        export_format=args.export_format,
-    )
-
-
 def _integrity_graph(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
     return workflow.graph_integrity()
 
@@ -135,6 +120,8 @@ def _print_result(result: Any, *, json_output: bool, stdout: TextIO) -> None:
     if claims.print_result(result, stdout):
         return
     if artifacts.print_result(result, stdout):
+        return
+    if exports.print_result(result, stdout):
         return
     if isinstance(result, list):
         _print_list(result, stdout)
