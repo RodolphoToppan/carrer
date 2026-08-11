@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import io
 import json
@@ -427,6 +428,18 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "no",
         ],
         ["--store", str(store), "exports", "list"],
+        [
+            "--store",
+            str(store),
+            "exports",
+            "integrity",
+            "--receipt-id",
+            "artifact_export_receipt:1",
+            "--output-directory",
+            str(tmp_path / "exports"),
+            "--checked-at",
+            NOW,
+        ],
         ["--store", str(store), "integrity", "graph"],
     ]
 
@@ -667,6 +680,16 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "human",
             "--decided-at",
             NEXT,
+        ],
+        ["exports", "integrity", "--output-directory", "out", "--checked-at", NOW],
+        ["exports", "integrity", "--receipt-id", "artifact_export_receipt:1", "--checked-at", NOW],
+        [
+            "exports",
+            "integrity",
+            "--receipt-id",
+            "artifact_export_receipt:1",
+            "--output-directory",
+            "out",
         ],
     ],
 )
@@ -2771,6 +2794,266 @@ def test_exports_build_json_matches_application_result(tmp_path: Path) -> None:
     assert json.loads(stdout) == expected
 
 
+def test_exports_integrity_delegates_outputs_report_and_preserves_graph_and_filesystem(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    store_path = _write_store(tmp_path / "graph.json", store)
+    expected = CareerWorkflow(JsonGraphStorage.load(store_path)).check_export_integrity(
+        receipt["id"], output_directory=output_dir, checked_at=NOW
+    )
+    before_graph = store_path.read_bytes()
+    before_nodes = copy.deepcopy(store.nodes)
+    before_edges = copy.deepcopy(store.edges)
+    before_audits = copy.deepcopy(store.audit_records)
+    before_files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def check_export_integrity(self, receipt_id: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append((receipt_id, kwargs))
+            return super().check_export_integrity(receipt_id, **kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "integrity",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 0
+    assert calls == [(receipt["id"], {"output_directory": str(output_dir), "checked_at": NOW})]
+    assert "report_id: artifact_export_integrity_report:" in stdout.getvalue()
+    assert "status: consistent" in stdout.getvalue()
+    assert f"receipt_id: {receipt['id']}" in stdout.getvalue()
+    assert "issue_count: 0" in stdout.getvalue()
+    assert "repairable_count: 0" in stdout.getvalue()
+    assert store_path.read_bytes() == before_graph
+    reloaded = JsonGraphStorage.load(store_path)
+    assert reloaded.nodes == before_nodes
+    assert reloaded.edges == before_edges
+    assert reloaded.audit_records == before_audits
+    assert {path.name: path.read_bytes() for path in output_dir.iterdir()} == before_files
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "integrity",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+        ]
+    )
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+
+
+@pytest.mark.parametrize(
+    ("mutate", "issue_code", "status"),
+    [
+        (
+            lambda _store, receipt, output_dir: (output_dir / receipt["properties"]["file_name"]).unlink(),
+            "export_file_missing",
+            "blocked",
+        ),
+        (
+            lambda _store, receipt, output_dir: (output_dir / receipt["properties"]["file_name"]).write_text(
+                "divergent", encoding="utf-8"
+            ),
+            "export_file_content_mismatch",
+            "blocked",
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"]
+                        and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT
+                    )
+                ],
+            ),
+            "artifact_edge_missing",
+            "repairable",
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM
+                    )
+                ],
+            ),
+            "claim_edge_missing",
+            "repairable",
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"]
+                        and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE
+                    )
+                ],
+            ),
+            "evidence_edge_missing",
+            "repairable",
+        ),
+        (
+            lambda store, receipt, _output_dir: store.edges.append(
+                {
+                    "id": "edge:unexpected-export",
+                    "edge_type": ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
+                    "from_node_id": receipt["id"],
+                    "to_node_id": "claim:unexpected",
+                    "created_at": NOW,
+                    "properties": {},
+                }
+            ),
+            "claim_edge_unexpected",
+            "blocked",
+        ),
+        (
+            lambda store, _receipt, _output_dir: store.audit_records.clear(),
+            "original_acceptance_audit_missing",
+            "blocked",
+        ),
+        (
+            lambda store, _receipt, _output_dir: store.audit_records[-1].__setitem__("actor", "other"),
+            "original_acceptance_audit_invalid",
+            "blocked",
+        ),
+        (
+            lambda _store, receipt, output_dir: (
+                output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+            ).write_text("residual", encoding="utf-8"),
+            "export_temp_file_present",
+            "repairable",
+        ),
+        (
+            lambda store, receipt, _output_dir: store.nodes[receipt["id"]]["properties"].__setitem__(
+                "source_type", "invalid"
+            ),
+            "receipt_wrong_source_type",
+            "blocked",
+        ),
+    ],
+)
+def test_exports_integrity_diagnoses_without_mutating_state(
+    tmp_path: Path, mutate: Any, issue_code: str, status: str
+) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    mutate(store, receipt, output_dir)
+    store_path = _write_store(tmp_path / "graph.json", store)
+    before_graph = store_path.read_bytes()
+    before_files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "integrity",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+        ]
+    )
+
+    assert code == 0
+    assert stderr == ""
+    report = json.loads(stdout)
+    assert report["status"] == status
+    assert issue_code in {issue["code"] for issue in report["issues"]}
+    assert store_path.read_bytes() == before_graph
+    assert {path.name: path.read_bytes() for path in output_dir.iterdir()} == before_files
+    reloaded = JsonGraphStorage.load(store_path)
+    assert reloaded.nodes_by_type("ArtifactExportRepairReceipt") == []
+
+
+def test_exports_integrity_missing_receipt_and_directory_are_controlled_and_read_only(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store_path = _write_store(tmp_path / "graph.json", _basic_store())
+    before = store_path.read_bytes()
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "integrity",
+            "--receipt-id",
+            "artifact_export_receipt:missing",
+            "--output-directory",
+            str(tmp_path),
+            "--checked-at",
+            NOW,
+        ]
+    )
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout)["status"] == "blocked"
+    assert json.loads(stdout)["issues"][0]["code"] == "receipt_not_found"
+    assert store_path.read_bytes() == before
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "integrity",
+            "--receipt-id",
+            "artifact_export_receipt:missing",
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+        ]
+    )
+    assert code == 1
+    assert stdout == ""
+    assert "output_directory must be an existing directory" in stderr
+    assert not output_dir.exists()
+    assert store_path.read_bytes() == before
+
+
 def test_exports_build_errors_do_not_save_or_write_files(tmp_path: Path) -> None:
     store_path, artifact = _export_ready_store(tmp_path / "graph.json")
     before = store_path.read_text(encoding="utf-8")
@@ -3505,6 +3788,16 @@ def test_read_only_commands_never_save_or_alter_store_file(tmp_path: Path) -> No
         ["claims", "list"],
         ["artifacts", "list"],
         ["exports", "list"],
+        [
+            "exports",
+            "integrity",
+            "--receipt-id",
+            store.nodes_by_type("ArtifactExportReceipt")[0]["id"],
+            "--output-directory",
+            str(tmp_path / "exports"),
+            "--checked-at",
+            NOW,
+        ],
         ["integrity", "graph"],
     ]
 
