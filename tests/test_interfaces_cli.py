@@ -440,6 +440,21 @@ def test_parser_accepts_valid_commands(tmp_path: Path) -> None:
             "--checked-at",
             NOW,
         ],
+        [
+            "--store",
+            str(store),
+            "exports",
+            "repair",
+            "build",
+            "--receipt-id",
+            "artifact_export_receipt:1",
+            "--output-directory",
+            str(tmp_path / "exports"),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+        ],
         ["--store", str(store), "integrity", "graph"],
     ]
 
@@ -2865,6 +2880,294 @@ def test_exports_integrity_delegates_outputs_report_and_preserves_graph_and_file
     assert code == 0
     assert stderr == ""
     assert json.loads(stdout) == expected
+
+
+@pytest.mark.parametrize(
+    ("mutate", "issue_code", "action"),
+    [
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"]
+                        and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT
+                    )
+                ],
+            ),
+            "artifact_edge_missing",
+            "create_missing_artifact_edge",
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM
+                    )
+                ],
+            ),
+            "claim_edge_missing",
+            "create_missing_claim_edges",
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"]
+                        and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE
+                    )
+                ],
+            ),
+            "evidence_edge_missing",
+            "create_missing_evidence_edges",
+        ),
+        (
+            lambda _store, receipt, output_dir: (
+                output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+            ).write_text("residual", encoding="utf-8"),
+            "export_temp_file_present",
+            "remove_stale_temp_file",
+        ),
+    ],
+)
+def test_exports_repair_build_regenerates_delegates_and_is_fully_read_only(
+    tmp_path: Path, mutate: Any, issue_code: str, action: str
+) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    mutate(store, receipt, output_dir)
+    store_path = _write_store(tmp_path / "graph.json", store)
+    expected = CareerWorkflow(JsonGraphStorage.load(store_path)).build_repair_candidate(
+        CareerWorkflow(JsonGraphStorage.load(store_path)).check_export_integrity(
+            receipt["id"], output_directory=output_dir, checked_at=NOW
+        ),
+        created_at=NEXT,
+    )
+    before_graph = store_path.read_bytes()
+    before_nodes = copy.deepcopy(store.nodes)
+    before_edges = copy.deepcopy(store.edges)
+    before_audits = copy.deepcopy(store.audit_records)
+    before_files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+    calls: list[str] = []
+
+    class FakeWorkflow(CareerWorkflow):
+        def check_export_integrity(self, receipt_id: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append("check:" + receipt_id)
+            return super().check_export_integrity(receipt_id, **kwargs)
+
+        def build_repair_candidate(self, report: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            calls.append("build:" + report["id"])
+            return super().build_repair_candidate(report, **kwargs)
+
+    stdout = io.StringIO()
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "build",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+        ],
+        stdout=stdout,
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 0
+    assert calls == [f"check:{receipt['id']}", f"build:{expected['report_id']}"]
+    assert f"candidate_id: {expected['id']}" in stdout.getvalue()
+    assert f"- issue: {issue_code}" in stdout.getvalue()
+    assert f"- repair_action: {action}" in stdout.getvalue()
+    assert str(output_dir) not in stdout.getvalue()
+    assert store_path.read_bytes() == before_graph
+    reloaded = JsonGraphStorage.load(store_path)
+    assert reloaded.nodes == before_nodes
+    assert reloaded.edges == before_edges
+    assert reloaded.audit_records == before_audits
+    assert reloaded.nodes_by_type("ArtifactExportRepairReceipt") == []
+    assert {path.name: path.read_bytes() for path in output_dir.iterdir()} == before_files
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "repair",
+            "build",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+        ]
+    )
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+
+
+def test_exports_repair_build_rejects_non_repairable_reports_and_arbitrary_payloads(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    store_path = _write_store(tmp_path / "graph.json", store)
+    before_graph = store_path.read_bytes()
+    final_file = output_dir / receipt["properties"]["file_name"]
+    final_bytes = final_file.read_bytes()
+
+    for mutation in (
+        lambda: None,
+        final_file.unlink,
+    ):
+        mutation()
+        code, stdout, stderr = _run(
+            [
+                "--store",
+                str(store_path),
+                "exports",
+                "repair",
+                "build",
+                "--receipt-id",
+                receipt["id"],
+                "--output-directory",
+                str(output_dir),
+                "--checked-at",
+                NOW,
+                "--created-at",
+                NEXT,
+            ]
+        )
+        assert code == 1
+        assert stdout == ""
+        assert "requires a repairable report" in stderr
+        assert store_path.read_bytes() == before_graph
+        if not final_file.exists():
+            final_file.write_bytes(final_bytes)
+
+    for argument in ("--report-json", "--report-file", "--candidate-json"):
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(
+                [
+                    "--store",
+                    str(store_path),
+                    "exports",
+                    "repair",
+                    "build",
+                    "--receipt-id",
+                    receipt["id"],
+                    "--output-directory",
+                    str(output_dir),
+                    "--checked-at",
+                    NOW,
+                    "--created-at",
+                    NEXT,
+                    argument,
+                    "{}",
+                ]
+            )
+
+
+@pytest.mark.parametrize("missing", ["--receipt-id", "--output-directory", "--checked-at", "--created-at"])
+def test_exports_repair_build_parser_requires_each_explicit_input(missing: str) -> None:
+    arguments = {
+        "--receipt-id": "artifact_export_receipt:1",
+        "--output-directory": "out",
+        "--checked-at": NOW,
+        "--created-at": NEXT,
+    }
+    command = ["--store", "graph.json", "exports", "repair", "build"]
+    for option, value in arguments.items():
+        if option != missing:
+            command.extend([option, value])
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(command)
+
+
+def test_exports_repair_build_returns_multiple_repairable_actions_without_mutation(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    store.edges = [
+        edge
+        for edge in store.edges
+        if not (edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT)
+    ]
+    temporary_file = output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+    temporary_file.write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+    workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    report = workflow.check_export_integrity(receipt["id"], output_directory=output_dir, checked_at=NOW)
+    expected = workflow.build_repair_candidate(report, created_at=NEXT)
+    before_graph = store_path.read_bytes()
+    before_nodes = copy.deepcopy(store.nodes)
+    before_edges = copy.deepcopy(store.edges)
+    before_audits = copy.deepcopy(store.audit_records)
+    before_files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "repair",
+            "build",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+        ]
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+    assert len(expected["issue_codes"]) >= 2
+    assert len(expected["repair_actions"]) >= 2
+    assert "artifact_edge_missing" in expected["issue_codes"]
+    assert "export_temp_file_present" in expected["issue_codes"]
+    assert "create_missing_artifact_edge" in expected["repair_actions"]
+    assert "remove_stale_temp_file" in expected["repair_actions"]
+    assert store_path.read_bytes() == before_graph
+    reloaded = JsonGraphStorage.load(store_path)
+    assert reloaded.nodes == before_nodes
+    assert reloaded.edges == before_edges
+    assert reloaded.audit_records == before_audits
+    assert {path.name: path.read_bytes() for path in output_dir.iterdir()} == before_files
+    assert temporary_file.read_text(encoding="utf-8") == "residual"
+    assert not any(
+        edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT
+        for edge in reloaded.edges
+    )
+    assert reloaded.nodes_by_type("ArtifactExportRepairReceipt") == []
 
 
 @pytest.mark.parametrize(

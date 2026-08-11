@@ -137,11 +137,30 @@ def test_acceptance_persists_accepted_analysis_edges_audit_and_minimal_review_me
     assert audit["audit_type"] == "contribution_analysis_accepted"
     assert audit["metadata"]["created"] is True
     assert audit["metadata"]["context_facts"] == len(analysis["context_facts"])
-    audit_json = json.dumps(audit)
-    assert "reviewed retry behavior" not in audit_json
-    assert "bug resolved" not in audit_json
-    assert "Retry fix" not in audit_json
-    assert "100" not in audit_json
+    metadata = audit["metadata"]
+    assert set(metadata) == {
+        "analysis_id",
+        "contribution_id",
+        "actor",
+        "decided_at",
+        "created",
+        "confidence",
+        "privacy_level",
+        "evidence_refs",
+        "context_facts",
+        "action_facts",
+        "outcome_facts",
+        "impact_signals",
+        "status",
+    }
+    metadata_json = json.dumps(metadata)
+    assert "reviewed retry behavior" not in metadata_json
+    assert "bug resolved" not in metadata_json
+    assert "Retry fix" not in metadata_json
+    for field in ("context_facts", "action_facts", "outcome_facts", "impact_signals"):
+        assert metadata[field] == len(analysis[field])
+        assert isinstance(metadata[field], int)
+    assert not {"statement", "text", "value", "unit", "source"} & set(metadata)
 
 
 def test_acceptance_is_idempotent_and_does_not_replace_original_review() -> None:
