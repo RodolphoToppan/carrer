@@ -11,8 +11,12 @@ from carrer.artifacts import (
     ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT,
     ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
     ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
+    validate_artifact_export_integrity_report,
     validate_artifact_export_receipt_contract,
+    validate_artifact_export_repair_acceptance_audit,
+    validate_artifact_export_repair_receipt_contract,
     validate_persisted_artifact_export_receipt,
+    validate_persisted_artifact_export_repair_receipt,
 )
 from carrer.storage.json_graph_storage import JsonGraphStorage
 
@@ -60,6 +64,20 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     repair_build.add_argument("--created-at", required=True)
     repair_build.set_defaults(handler=_exports_repair_build)
 
+    repair_accept = repair_commands.add_parser("accept")
+    _add_repair_candidate_args(repair_accept)
+    repair_accept.add_argument("--actor", required=True)
+    repair_accept.add_argument("--decided-at", required=True)
+    repair_accept.add_argument("--verified-at", required=True)
+    repair_accept.set_defaults(handler=_exports_repair_accept)
+
+    repair_reject = repair_commands.add_parser("reject")
+    _add_repair_candidate_args(repair_reject)
+    repair_reject.add_argument("--actor", required=True)
+    repair_reject.add_argument("--decided-at", required=True)
+    repair_reject.add_argument("--reason", required=True)
+    repair_reject.set_defaults(handler=_exports_repair_reject)
+
 
 def print_result(result: Any, stdout: TextIO) -> bool:
     if isinstance(result, dict) and result.get("candidate_type") == "claim_based_artifact_export":
@@ -68,8 +86,11 @@ def print_result(result: Any, stdout: TextIO) -> bool:
     if isinstance(result, dict) and result.get("decision") == "accepted" and "receipt" in result:
         _print_accepted_export(result, stdout)
         return True
-    if isinstance(result, dict) and result.get("decision") == "rejected" and "candidate_id" in result:
-        _print_rejected_export(result, stdout)
+    if isinstance(result, dict) and result.get("decision") == "accepted" and "report" in result:
+        _print_accepted_export_repair(result, stdout)
+        return True
+    if isinstance(result, dict) and result.get("decision") == "rejected" and "receipt_id" in result:
+        _print_rejected_export_repair(result, stdout)
         return True
     if isinstance(result, dict) and result.get("report_type") == "artifact_export_integrity":
         _print_export_integrity(result, stdout)
@@ -84,6 +105,13 @@ def _add_export_candidate_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--artifact-id", required=True)
     parser.add_argument("--export-scope", required=True)
     parser.add_argument("--export-format", required=True)
+    parser.add_argument("--created-at", required=True)
+
+
+def _add_repair_candidate_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--receipt-id", required=True)
+    parser.add_argument("--output-directory", required=True)
+    parser.add_argument("--checked-at", required=True)
     parser.add_argument("--created-at", required=True)
 
 
@@ -148,12 +176,55 @@ def _exports_integrity(workflow: CareerWorkflow, args: argparse.Namespace) -> di
 
 
 def _exports_repair_build(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
-    report = workflow.check_export_integrity(
-        args.receipt_id,
-        output_directory=args.output_directory,
-        checked_at=args.checked_at,
+    return _current_repair_candidate(workflow, args)
+
+
+def _exports_repair_accept(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
+    candidate = _current_repair_candidate(workflow, args)
+    before_audit_count = len(workflow.store.audit_records)
+    result = workflow.accept_repair(
+        candidate,
+        decision_actor=args.actor,
+        decided_at=args.decided_at,
+        verified_at=args.verified_at,
     )
-    return workflow.build_repair_candidate(report, created_at=args.created_at)
+    _verify_repair_acceptance(
+        workflow.store,
+        result,
+        candidate,
+        args.actor,
+        args.decided_at,
+        args.verified_at,
+        before_audit_count,
+    )
+    workflow.store.save(args.store)
+    return result
+
+
+def _exports_repair_reject(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
+    before_nodes = copy.deepcopy(workflow.store.nodes)
+    before_edges = copy.deepcopy(workflow.store.edges)
+    before_audit_count = len(workflow.store.audit_records)
+    candidate = _current_repair_candidate(workflow, args)
+    result = workflow.reject_repair(
+        candidate,
+        decision_actor=args.actor,
+        decided_at=args.decided_at,
+        reason=args.reason,
+    )
+    _verify_repair_rejection(
+        workflow.store,
+        result,
+        candidate,
+        args.actor,
+        args.decided_at,
+        args.reason,
+        before_nodes,
+        before_edges,
+        before_audit_count,
+    )
+    workflow.store.save(args.store)
+    return result
 
 
 def _current_export_candidate(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
@@ -163,6 +234,115 @@ def _current_export_candidate(workflow: CareerWorkflow, args: argparse.Namespace
         export_format=args.export_format,
         created_at=args.created_at,
     )
+
+
+def _current_repair_candidate(workflow: CareerWorkflow, args: argparse.Namespace) -> dict[str, Any]:
+    report = workflow.check_export_integrity(
+        args.receipt_id,
+        output_directory=args.output_directory,
+        checked_at=args.checked_at,
+    )
+    return workflow.build_repair_candidate(report, created_at=args.created_at)
+
+
+def _verify_repair_acceptance(
+    store: JsonGraphStorage,
+    result: dict[str, Any],
+    candidate: dict[str, Any],
+    actor: str,
+    decided_at: str,
+    verified_at: str,
+    start: int,
+) -> None:
+    if result.get("decision") != "accepted":
+        raise ValueError("ArtifactExportRepair acceptance result is not accepted")
+    report = result.get("report")
+    if not isinstance(report, dict):
+        raise ValueError("ArtifactExportRepair acceptance result is missing report")
+    valid_report = validate_artifact_export_integrity_report(report)
+    if (
+        valid_report.get("status") != "consistent"
+        or valid_report.get("receipt_id") != candidate["receipt_id"]
+        or valid_report.get("source_artifact_id") != candidate["source_artifact_id"]
+        or valid_report.get("output_directory") != candidate["output_directory"]
+        or valid_report.get("checked_at") != verified_at
+    ):
+        raise ValueError("ArtifactExportRepair acceptance result report is not consistent")
+    for field in ("applied", "temporary_file_removed"):
+        if type(result.get(field)) is not bool:
+            raise ValueError(f"ArtifactExportRepair acceptance result {field} must be bool")
+    if type(result.get("repaired_edge_count")) is not int or result["repaired_edge_count"] < 0:
+        raise ValueError("ArtifactExportRepair acceptance result repaired_edge_count must be a non-negative integer")
+    repair_receipt = validate_persisted_artifact_export_repair_receipt(store, candidate)
+    validate_artifact_export_repair_receipt_contract(repair_receipt)
+    validate_artifact_export_repair_acceptance_audit(store, candidate)
+    _require_repair_accept_audit(store, candidate, actor, decided_at, result, start)
+
+
+def _verify_repair_rejection(
+    store: JsonGraphStorage,
+    result: dict[str, Any],
+    candidate: dict[str, Any],
+    actor: str,
+    decided_at: str,
+    reason: str,
+    before_nodes: dict[str, dict],
+    before_edges: list[dict],
+    start: int,
+) -> None:
+    if result.get("decision") != "rejected" or result.get("candidate_id") != candidate["id"]:
+        raise ValueError("ArtifactExportRepair rejection result does not match current candidate")
+    if result.get("receipt_id") != candidate["receipt_id"] or result.get("reason") != reason:
+        raise ValueError("ArtifactExportRepair rejection result does not match current decision")
+    if store.nodes != before_nodes or store.edges != before_edges:
+        raise ValueError("ArtifactExportRepair rejection created unexpected graph state before save")
+    if not any(
+        record.get("audit_type") == "artifact_export_repair_rejected"
+        and record.get("result") == "rejected"
+        and record.get("target_refs") == [candidate["receipt_id"], candidate["report_id"], candidate["id"]]
+        and record.get("actor") == actor
+        and record.get("created_at") == decided_at
+        and record.get("metadata", {}).get("repair_candidate_id") == candidate["id"]
+        and record.get("metadata", {}).get("receipt_id") == candidate["receipt_id"]
+        and record.get("metadata", {}).get("report_id") == candidate["report_id"]
+        and record.get("metadata", {}).get("actor") == actor
+        and record.get("metadata", {}).get("decided_at") == decided_at
+        and record.get("metadata", {}).get("reason") == reason
+        and record.get("metadata", {}).get("issue_codes") == candidate["issue_codes"]
+        and record.get("metadata", {}).get("repair_actions") == candidate["repair_actions"]
+        for record in store.audit_records[start:]
+    ):
+        raise ValueError(f"ArtifactExportRepair rejection audit not found before save: {candidate['id']}")
+
+
+def _require_repair_accept_audit(
+    store: JsonGraphStorage,
+    candidate: dict[str, Any],
+    actor: str,
+    decided_at: str,
+    result: dict[str, Any],
+    start: int,
+) -> None:
+    if not any(
+        record.get("audit_type") == "artifact_export_repair_accepted"
+        and record.get("result") == "accepted"
+        and record.get("target_refs") == [candidate["receipt_id"], candidate["report_id"], candidate["id"]]
+        and record.get("actor") == actor
+        and record.get("created_at") == decided_at
+        and record.get("metadata", {}).get("repair_candidate_id") == candidate["id"]
+        and record.get("metadata", {}).get("receipt_id") == candidate["receipt_id"]
+        and record.get("metadata", {}).get("report_id") == candidate["report_id"]
+        and record.get("metadata", {}).get("actor") == actor
+        and record.get("metadata", {}).get("decided_at") == decided_at
+        and record.get("metadata", {}).get("issue_codes") == candidate["issue_codes"]
+        and record.get("metadata", {}).get("repair_actions") == candidate["repair_actions"]
+        and record.get("metadata", {}).get("final_status") == "consistent"
+        and record.get("metadata", {}).get("applied") is result["applied"]
+        and record.get("metadata", {}).get("repaired_edge_count") == result["repaired_edge_count"]
+        and record.get("metadata", {}).get("temporary_file_removed") is result["temporary_file_removed"]
+        for record in store.audit_records[start:]
+    ):
+        raise ValueError(f"ArtifactExportRepair acceptance audit not found before save: {candidate['id']}")
 
 
 def _verify_export_acceptance(
@@ -329,6 +509,23 @@ def _print_rejected_export(result: dict[str, Any], stdout: TextIO) -> None:
     print(f"decision: {result['decision']}", file=stdout)
     print(f"candidate_id: {result['candidate_id']}", file=stdout)
     print(f"source_artifact_id: {result['source_artifact_id']}", file=stdout)
+    print(f"reason: {result['reason']}", file=stdout)
+
+
+def _print_accepted_export_repair(result: dict[str, Any], stdout: TextIO) -> None:
+    report = result["report"]
+    print(f"decision: {result['decision']}", file=stdout)
+    print(f"receipt_id: {report['receipt_id']}", file=stdout)
+    print(f"applied: {result['applied']}", file=stdout)
+    print(f"repaired_edge_count: {result['repaired_edge_count']}", file=stdout)
+    print(f"temporary_file_removed: {result['temporary_file_removed']}", file=stdout)
+    print(f"final_status: {report['status']}", file=stdout)
+
+
+def _print_rejected_export_repair(result: dict[str, Any], stdout: TextIO) -> None:
+    print(f"decision: {result['decision']}", file=stdout)
+    print(f"candidate_id: {result['candidate_id']}", file=stdout)
+    print(f"receipt_id: {result['receipt_id']}", file=stdout)
     print(f"reason: {result['reason']}", file=stdout)
 
 

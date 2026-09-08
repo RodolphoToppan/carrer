@@ -3107,6 +3107,700 @@ def test_exports_repair_build_parser_requires_each_explicit_input(missing: str) 
         cli.build_parser().parse_args(command)
 
 
+@pytest.mark.parametrize(
+    ("decision", "missing"),
+    [
+        ("accept", option)
+        for option in (
+            "--receipt-id",
+            "--output-directory",
+            "--checked-at",
+            "--created-at",
+            "--actor",
+            "--decided-at",
+            "--verified-at",
+        )
+    ]
+    + [
+        ("reject", option)
+        for option in (
+            "--receipt-id",
+            "--output-directory",
+            "--checked-at",
+            "--created-at",
+            "--actor",
+            "--decided-at",
+            "--reason",
+        )
+    ],
+)
+def test_exports_repair_decision_parser_requires_each_explicit_input(decision: str, missing: str) -> None:
+    arguments = {
+        "--receipt-id": "artifact_export_receipt:1",
+        "--output-directory": "out",
+        "--checked-at": NOW,
+        "--created-at": NEXT,
+        "--actor": "human",
+        "--decided-at": NEXT,
+        "--verified-at": NEXT,
+        "--reason": "no",
+    }
+    command = ["--store", "graph.json", "exports", "repair", decision]
+    for option, value in arguments.items():
+        if (
+            option != missing
+            and (decision == "accept" or option != "--verified-at")
+            and (decision == "reject" or option != "--reason")
+        ):
+            command.extend([option, value])
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(command)
+
+
+def test_exports_repair_accept_and_reject_regenerate_current_candidate(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    temporary_file = output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+    temporary_file.write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+
+    accept = [
+        "--store",
+        str(store_path),
+        "exports",
+        "repair",
+        "accept",
+        "--receipt-id",
+        receipt["id"],
+        "--output-directory",
+        str(output_dir),
+        "--checked-at",
+        NOW,
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+        "--verified-at",
+        "2026-01-03T00:00:00Z",
+    ]
+    code, stdout, stderr = _run(accept)
+    reloaded = JsonGraphStorage.load(store_path)
+
+    assert code == 0
+    assert stderr == ""
+    assert "decision: accepted" in stdout
+    assert "final_status: consistent" in stdout
+    assert not temporary_file.exists()
+    assert len(reloaded.nodes_by_type("ArtifactExportRepairReceipt")) == 1
+
+    temporary_file.write_text("residual", encoding="utf-8")
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "reject",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            "2026-01-04T00:00:00Z",
+            "--reason",
+            "manual review",
+        ]
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert "decision: rejected" in stdout
+    assert temporary_file.exists()
+    assert len(JsonGraphStorage.load(store_path).nodes_by_type("ArtifactExportRepairReceipt")) == 1
+
+
+@pytest.mark.parametrize("field", ["receipt_id", "checked_at"])
+def test_exports_repair_accept_rejects_final_report_not_linked_to_candidate_before_save(
+    tmp_path: Path, field: str
+) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    (output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")).write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+    before = store_path.read_bytes()
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+            super().save(path)
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, current: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes = current.nodes
+            self.store.edges = current.edges
+            self.store.audit_records = current.audit_records
+
+        def accept_repair(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            result = super().accept_repair(candidate, **kwargs)
+            result["report"] = copy.deepcopy(result["report"])
+            result["report"][field] = "artifact_export_receipt:other" if field == "receipt_id" else NEXT
+            return result
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "accept",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--verified-at",
+            "2026-01-04T00:00:00+00:00",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("mutate", "edge_type"),
+    [
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"]
+                        and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT
+                    )
+                ],
+            ),
+            ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT,
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM
+                    )
+                ],
+            ),
+            ARTIFACT_EXPORT_RECEIPT_FOR_CLAIM,
+        ),
+        (
+            lambda store, receipt, _output_dir: setattr(
+                store,
+                "edges",
+                [
+                    edge
+                    for edge in store.edges
+                    if not (
+                        edge["from_node_id"] == receipt["id"]
+                        and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE
+                    )
+                ],
+            ),
+            ARTIFACT_EXPORT_RECEIPT_SUPPORTED_BY_EVIDENCE,
+        ),
+        (
+            lambda _store, receipt, output_dir: (
+                output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+            ).write_text("residual"),
+            None,
+        ),
+    ],
+)
+def test_exports_repair_accept_persists_each_repairable_category(
+    tmp_path: Path, mutate: Any, edge_type: str | None
+) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    mutate(store, receipt, output_dir)
+    store_path = _write_store(tmp_path / "graph.json", store)
+    command = [
+        "--store",
+        str(store_path),
+        "--json",
+        "exports",
+        "repair",
+        "accept",
+        "--receipt-id",
+        receipt["id"],
+        "--output-directory",
+        str(output_dir),
+        "--checked-at",
+        NOW,
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+        "--verified-at",
+        "2026-01-04T00:00:00+00:00",
+    ]
+
+    code, stdout, stderr = _run(command)
+    reloaded = JsonGraphStorage.load(store_path)
+    result = json.loads(stdout)
+
+    assert code == 0
+    assert stderr == ""
+    assert result["decision"] == "accepted"
+    assert result["report"]["status"] == "consistent"
+    assert reloaded.nodes_by_type("ArtifactExportRepairReceipt")
+    assert any(record["audit_type"] == "artifact_export_repair_accepted" for record in reloaded.audit_records)
+    if edge_type:
+        assert any(edge["from_node_id"] == receipt["id"] and edge["edge_type"] == edge_type for edge in reloaded.edges)
+    else:
+        assert not (output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")).exists()
+
+
+def test_exports_repair_review_semantics_and_multiple_actions_are_current_state_only(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    store.edges = [
+        edge
+        for edge in store.edges
+        if not (edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT)
+    ]
+    temp = output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+    temp.write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+    base = [
+        "--store",
+        str(store_path),
+        "exports",
+        "repair",
+        "reject",
+        "--receipt-id",
+        receipt["id"],
+        "--output-directory",
+        str(output_dir),
+        "--checked-at",
+        NOW,
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+        "--reason",
+        "review",
+    ]
+
+    assert _run(base)[0] == 0
+    assert _run(base)[0] == 0
+    reloaded = JsonGraphStorage.load(store_path)
+    assert (
+        len([record for record in reloaded.audit_records if record["audit_type"] == "artifact_export_repair_rejected"])
+        == 2
+    )
+
+    accept = [
+        "--store",
+        str(store_path),
+        "exports",
+        "repair",
+        "accept",
+        "--receipt-id",
+        receipt["id"],
+        "--output-directory",
+        str(output_dir),
+        "--checked-at",
+        NOW,
+        "--created-at",
+        NEXT,
+        "--actor",
+        "human",
+        "--decided-at",
+        NEXT,
+        "--verified-at",
+        "2026-01-04T00:00:00+00:00",
+    ]
+    assert _run(accept)[0] == 0
+    before = store_path.read_bytes()
+    code, stdout, _ = _run(accept)
+    assert code == 1
+    assert stdout == ""
+    assert store_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("temp_only", [False, True])
+def test_exports_repair_accept_save_failure_preserves_durable_graph_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, temp_only: bool
+) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    final_file = output_dir / receipt["properties"]["file_name"]
+    final_bytes = final_file.read_bytes()
+    temp = output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+    if temp_only:
+        temp.write_text("residual", encoding="utf-8")
+    else:
+        store.edges = [
+            edge
+            for edge in store.edges
+            if not (edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT)
+        ]
+    store_path = _write_store(tmp_path / "graph.json", store)
+    before = store_path.read_bytes()
+
+    def fail_save(self: JsonGraphStorage, path: Path) -> None:
+        raise OSError("save failed")
+
+    monkeypatch.setattr(JsonGraphStorage, "save", fail_save)
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "accept",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--verified-at",
+            "2026-01-04T00:00:00+00:00",
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert "save failed" in stderr
+    assert store_path.read_bytes() == before
+    if temp_only:
+        reloaded = JsonGraphStorage.load(store_path)
+        assert not temp.exists()
+        assert final_file.exists() and final_file.read_bytes() == final_bytes
+        assert reloaded.nodes_by_type("ArtifactExportRepairReceipt") == []
+        assert not any(record["audit_type"] == "artifact_export_repair_accepted" for record in reloaded.audit_records)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("applied", 1), ("temporary_file_removed", 1), ("repaired_edge_count", True), ("repaired_edge_count", -1)],
+)
+def test_exports_repair_accept_result_guards_prevent_save(tmp_path: Path, field: str, value: Any) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    (output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")).write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, current: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes, self.store.edges, self.store.audit_records = (
+                current.nodes,
+                current.edges,
+                current.audit_records,
+            )
+
+        def accept_repair(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            result = super().accept_repair(candidate, **kwargs)
+            result[field] = value
+            return result
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "accept",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--verified-at",
+            "2026-01-04T00:00:00+00:00",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    assert code == 1
+    assert save_called is False
+
+
+def test_exports_repair_temp_unlink_failure_does_not_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    temp = output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")
+    temp.write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+    before = store_path.read_bytes()
+    save_called = False
+    original_unlink = Path.unlink
+
+    def fail_temp_unlink(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == temp:
+            raise OSError("unlink failed")
+        original_unlink(path, *args, **kwargs)
+
+    def fail_if_saved(self: JsonGraphStorage, path: Path) -> None:
+        nonlocal save_called
+        save_called = True
+
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+    monkeypatch.setattr(JsonGraphStorage, "save", fail_if_saved)
+    code, stdout, _ = _run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "accept",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--verified-at",
+            "2026-01-04T00:00:00+00:00",
+        ]
+    )
+
+    assert code == 1
+    assert stdout == ""
+    assert save_called is False
+    assert store_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("argument", ["--candidate-json", "--candidate-file", "--report-json", "--report-file"])
+@pytest.mark.parametrize("decision", ["accept", "reject"])
+def test_exports_repair_decisions_reject_arbitrary_payload_arguments(argument: str, decision: str) -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--store", "graph.json", "exports", "repair", decision, argument, "{}"])
+
+
+def test_exports_repair_decision_parser_accepts_positive_commands() -> None:
+    parser = cli.build_parser()
+    common = ["--store", "graph.json", "exports", "repair"]
+    parser.parse_args(
+        [
+            *common,
+            "accept",
+            "--receipt-id",
+            "artifact_export_receipt:1",
+            "--output-directory",
+            "out",
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--verified-at",
+            NEXT,
+        ]
+    )
+    parser.parse_args(
+        [
+            *common,
+            "reject",
+            "--receipt-id",
+            "artifact_export_receipt:1",
+            "--output-directory",
+            "out",
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "no",
+        ]
+    )
+
+
+def test_exports_repair_reject_nested_mutation_and_historical_audit_cannot_save(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    (output_dir / ("." + receipt["properties"]["file_name"] + ".tmp")).write_text("residual", encoding="utf-8")
+    store_path = _write_store(tmp_path / "graph.json", store)
+    before = store_path.read_bytes()
+    save_called = False
+
+    class FakeStore(JsonGraphStorage):
+        def save(self, path: Path) -> None:
+            nonlocal save_called
+            save_called = True
+
+    class FakeWorkflow(CareerWorkflow):
+        def __init__(self, current: JsonGraphStorage) -> None:
+            super().__init__(FakeStore())
+            self.store.nodes, self.store.edges, self.store.audit_records = (
+                current.nodes,
+                current.edges,
+                current.audit_records,
+            )
+
+        def reject_repair(self, candidate: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            result = super().reject_repair(candidate, **kwargs)
+            self.store.nodes[candidate["receipt_id"]]["properties"]["unexpected"] = "mutation"
+            return result
+
+    code = cli.run(
+        [
+            "--store",
+            str(store_path),
+            "exports",
+            "repair",
+            "reject",
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            "--reason",
+            "no",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        workflow_factory=FakeWorkflow,
+    )
+    assert code == 1
+    assert save_called is False
+    assert store_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("decision", ["accept", "reject"])
+def test_exports_repair_json_is_exact_application_result(tmp_path: Path, decision: str) -> None:
+    output_dir = tmp_path / "exports"
+    store = _accepted_store(output_dir)
+    receipt = store.nodes_by_type("ArtifactExportReceipt")[0]
+    store.edges = [
+        edge
+        for edge in store.edges
+        if not (edge["from_node_id"] == receipt["id"] and edge["edge_type"] == ARTIFACT_EXPORT_RECEIPT_FOR_ARTIFACT)
+    ]
+    store_path = _write_store(tmp_path / "graph.json", store)
+    expected_workflow = CareerWorkflow(JsonGraphStorage.load(store_path))
+    candidate = expected_workflow.build_repair_candidate(
+        expected_workflow.check_export_integrity(receipt["id"], output_directory=output_dir, checked_at=NOW),
+        created_at=NEXT,
+    )
+    if decision == "accept":
+        expected = expected_workflow.accept_repair(
+            candidate, decision_actor="human", decided_at=NEXT, verified_at="2026-01-04T00:00:00+00:00"
+        )
+        extra = ["--verified-at", "2026-01-04T00:00:00+00:00"]
+    else:
+        expected = expected_workflow.reject_repair(candidate, decision_actor="human", decided_at=NEXT, reason="no")
+        extra = ["--reason", "no"]
+    code, stdout, stderr = _run(
+        [
+            "--store",
+            str(store_path),
+            "--json",
+            "exports",
+            "repair",
+            decision,
+            "--receipt-id",
+            receipt["id"],
+            "--output-directory",
+            str(output_dir),
+            "--checked-at",
+            NOW,
+            "--created-at",
+            NEXT,
+            "--actor",
+            "human",
+            "--decided-at",
+            NEXT,
+            *extra,
+        ]
+    )
+    assert code == 0
+    assert stderr == ""
+    assert json.loads(stdout) == expected
+
+
 def test_exports_repair_build_returns_multiple_repairable_actions_without_mutation(tmp_path: Path) -> None:
     output_dir = tmp_path / "exports"
     store = _accepted_store(output_dir)
