@@ -1,0 +1,48 @@
+{
+  "format": "source_export_v1",
+  "captured_at": "2026-01-01T12:00:00Z",
+  "engineer": {"id": "synthetic-resume-engineer", "display_name": "Synthetic Engineer", "primary_email_hash": "synthetic-no-email"},
+  "source": {"id": "synthetic-resume-validation", "type": "json_fixture", "name": "Synthetic career value experiment", "visibility": "artifact_safe"},
+  "records": [
+    {
+      "type": "work_item", "external_id": "PERF-1", "occurred_at": "2025-02-10T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"title": "Investigate slow catalog queries", "state": "closed", "description": "Synthetic engineer diagnosed repeated database queries in the catalog endpoint and implemented batch loading. A peer reviewed the change. The same staging workload measured median response time before and after; this is not a production SLA or a business-impact measurement.", "technologies": ["Java", "PostgreSQL"], "metrics": {"response_time_before_ms": 800, "response_time_after_ms": 300}}
+    },
+    {
+      "type": "commit", "external_id": "PERF-2", "occurred_at": "2025-02-11T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"message": "Batch catalog reads to remove repeated queries", "description": "Authored by the synthetic engineer. Staging replay used the same catalog and request mix; median response time changed from 800 ms to 300 ms. No claim about production latency.", "technologies": ["Java", "PostgreSQL"], "relationships": [{"external_id": "PERF-1", "type": "implements"}]}
+    },
+    {
+      "type": "work_item", "external_id": "RELY-1", "occurred_at": "2025-04-10T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"title": "Prevent duplicate processing during message redelivery", "state": "closed", "description": "Synthetic engineer investigated a recurring redelivery failure and implemented an idempotency guard with duplicate-attempt logging. Replay verification produced one persisted result per message. No production incident-rate reduction was measured.", "technologies": ["Java", "RabbitMQ"]}
+    },
+    {
+      "type": "commit", "external_id": "RELY-2", "occurred_at": "2025-04-11T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"message": "Guard message processing with a unique idempotency key", "description": "Synthetic engineer authored the guard and duplicate-attempt log. Reviewer confirmed that replaying the same message did not create a second persisted result.", "technologies": ["Java", "RabbitMQ"], "relationships": [{"external_id": "RELY-1", "type": "implements"}]}
+    },
+    {
+      "type": "work_item", "external_id": "DELIVERY-1", "occurred_at": "2025-07-10T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"title": "Deliver paginated inventory API integration", "state": "closed", "description": "Synthetic engineer contributed the pagination adapter and contract tests. Another engineer owned authentication and the release decision. Release verification confirmed complete page traversal without duplicate inventory entries; no revenue impact was measured.", "technologies": ["Python", "HTTP"]}
+    },
+    {
+      "type": "commit", "external_id": "DELIVERY-2", "occurred_at": "2025-07-11T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"message": "Implement cursor pagination and contract tests", "description": "Synthetic engineer implemented the adapter. The release owner recorded successful end-to-end page traversal and retained responsibility for rollout.", "technologies": ["Python", "HTTP"], "relationships": [{"external_id": "DELIVERY-1", "type": "implements"}]}
+    },
+    {
+      "type": "documentation", "external_id": "REVIEW-1", "occurred_at": "2025-10-10T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"title": "Publish migration rollback review checklist", "state": "published", "description": "Synthetic engineer facilitated a technical review and documented rollback checks for database migrations. The team adopted the checklist for its next migration. This supports technical facilitation, not management responsibility or organization-wide leadership.", "technologies": ["PostgreSQL"]}
+    },
+    {
+      "type": "review_comment", "external_id": "REVIEW-2", "occurred_at": "2025-10-11T10:00:00Z", "privacy_level": "artifact_safe",
+      "payload": {"title": "Request rollback rehearsal before migration approval", "description": "Synthetic engineer requested a rollback rehearsal; the migration author recorded a successful rehearsal and applied the checklist. The synthetic engineer reviewed the plan but did not implement the migration.", "technologies": ["PostgreSQL"], "relationships": [{"external_id": "REVIEW-1", "type": "applies"}]}
+    },
+    {
+      "type": "work_item", "external_id": "PRIVATE-CONTROL", "occurred_at": "2025-11-10T10:00:00Z", "privacy_level": "private",
+      "payload": {"title": "SYNTHETIC_PRIVATE_CANARY", "state": "closed", "description": "Privacy control only; invented label, not a real secret.", "error_count": 987654}
+    },
+    {
+      "type": "work_item", "external_id": "INTERNAL-CONTROL", "occurred_at": "2025-11-11T10:00:00Z", "privacy_level": "internal",
+      "payload": {"title": "SYNTHETIC_INTERNAL_CANARY", "state": "closed", "description": "Privacy control only; invented label, not a real internal identifier.", "error_count": 876543}
+    }
+  ]
+}
