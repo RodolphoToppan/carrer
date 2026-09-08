@@ -12,7 +12,6 @@ permissions:
 defaults:
   run:
     shell: bash
-    working-directory: ${{ github.workspace }}
 
 env:
   TZ: UTC
@@ -72,8 +71,8 @@ jobs:
 
       - name: Create isolated environment
         run: |
-          python -m venv .temp/venv
-          echo "$GITHUB_WORKSPACE/.temp/venv/bin" >> "$GITHUB_PATH"
+          python -m venv .venv-ci
+          echo "$GITHUB_WORKSPACE/.venv-ci/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: |
@@ -95,4 +94,4 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          python -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml -v --basetemp=.temp/pytest-quality
+          python -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml -v --basetemp="${RUNNER_TEMP}/carrer-pytest-quality"
