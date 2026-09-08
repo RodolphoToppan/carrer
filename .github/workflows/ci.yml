@@ -6,26 +6,80 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: ${{ github.workspace }}
+
+env:
+  TZ: UTC
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONUTF8: "1"
+
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify checked-out commit
+        run: |
+          head_sha=$(git rev-parse HEAD)
+          printf 'HEAD=%s\n' "$head_sha"
+          if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::HEAD does not match github.sha"
+            exit 1
+          fi
+          status=$(git status --short --untracked-files=all)
+          printf 'git status --short:\n%s\n' "$status"
+          if [[ -n "$status" ]]; then
+            echo "::error::Working tree is not clean after checkout"
+            exit 1
+          fi
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+          cache-dependency-path: |
+            pyproject.toml
+            .github/requirements-ci.txt
+
+      - name: Audit execution identity and runtime
+        run: |
+          printf 'actor=%s\n' "$GITHUB_ACTOR"
+          printf 'triggering_actor=%s\n' "${GITHUB_TRIGGERING_ACTOR:-unavailable}"
+          printf 'event_name=%s\n' "$GITHUB_EVENT_NAME"
+          printf 'ref=%s\n' "$GITHUB_REF"
+          printf 'ref_name=%s\n' "$GITHUB_REF_NAME"
+          printf 'sha=%s\n' "$GITHUB_SHA"
+          printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+          printf 'runner_os=%s\nrunner_arch=%s\nrunner_name=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$RUNNER_NAME"
+          printf 'runner_image=%s\nrunner_image_version=%s\n' "$ImageOS" "$ImageVersion"
+          python --version
+
+      - name: Create isolated environment
+        run: |
+          python -m venv .temp/venv
+          echo "$GITHUB_WORKSPACE/.temp/venv/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install -r .github/requirements-ci.txt
+          python -m pip install --no-build-isolation -c .github/requirements-ci.txt -e ".[dev]"
+          python -m pip check
 
       - name: Lint with ruff
         run: |
@@ -41,4 +95,4 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          python -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml -v
+          python -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml -v --basetemp=.temp/pytest-quality

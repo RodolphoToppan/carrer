@@ -52,6 +52,26 @@ Escopo tipado obrigatorio atual:
 ```bash
 python -m mypy src/carrer/
 ```
+## CI
+O workflow `.github/workflows/ci.yml` executa em pushes e pull requests para `main` e `develop`,
+com Python 3.11 e 3.12 no Ubuntu 24.04. Cada versao executa Ruff check, Ruff format --check,
+mypy e pytest com coverage (terminal e XML, sem threshold minimo). Uma falha nao cancela a outra versao.
+Os comandos partem da raiz do repositorio, com UTC e UTF-8. Cada job cria um venv novo e instala
+as versoes de `.github/requirements-ci.txt`, incluindo dependencias transitivas e setuptools;
+o extra `dev` continua definido em `pyproject.toml`. Para reproduzir a instalacao em um venv local:
+```bash
+python -m pip install -r .github/requirements-ci.txt
+python -m pip install --no-build-isolation -c .github/requirements-ci.txt -e ".[dev]"
+python -m pip check
+```
+Atualize os pins de dependencias em conjunto e valide os quality gates nas duas versoes Python.
+O cache armazena apenas downloads do pip, considera ambos os arquivos de dependencias e e opcional.
+As versoes patch do Python e a imagem do runner podem receber atualizacoes; os logs registram o runtime usado.
+O CI usa somente `contents: read`, actions fixadas por SHA e checkout sem persistir credenciais.
+A auditoria registra actor, triggering_actor, evento, ref, ref_name, SHA, repositorio, Python e runner,
+sem imprimir secrets, tokens ou o ambiente completo. Antes de instalar dependencias, o job exige
+`HEAD == github.sha` e working tree limpo. Em pull requests, esse SHA corresponde ao merge commit
+de teste do GitHub. O Dependabot verifica atualizacoes de actions semanalmente.
 ## Execucao local do MVP
 ```bash
 python scripts/run_mvp.py
